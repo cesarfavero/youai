@@ -8,11 +8,21 @@ repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
+[lib]
+name = "youai_guard"
+path = "src/lib.rs"
+
 [[bin]]
 name = "youai-guard"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
 clap.workspace = true
+libc.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
