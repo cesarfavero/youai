@@ -1,4 +1,4 @@
-//! YouAI Resource Governor
+//! YouAI Resource Guard
 //!
 //! Independent process that enforces RAM/CPU/GPU limits on the inference worker.
 //! See docs/NEXT_STEPS.md — Passo 3 for implementation plan.
@@ -7,7 +7,7 @@ use clap::Parser;
 use tracing::info;
 
 #[derive(Parser, Debug)]
-#[command(name = "youai-governor", about = "YouAI resource governor", version)]
+#[command(name = "youai-guard", about = "YouAI resource guard", version)]
 struct Args {
     /// Maximum RAM (e.g. 8g, 4096m)
     #[arg(long, default_value = "8g")]
@@ -25,7 +25,8 @@ struct Args {
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -35,11 +36,11 @@ fn main() {
         ram_max = %args.ram_max,
         cpu_percent = args.cpu_percent,
         poll_ms = args.poll_ms,
-        "youai-governor scaffold — cgroup enforcement not yet implemented"
+        "youai-guard scaffold — cgroup enforcement not yet implemented"
     );
 
     eprintln!(
-        "youai-governor v{} — POC pending (see docs/NEXT_STEPS.md passo 3)",
+        "youai-guard v{} — POC pending (see docs/NEXT_STEPS.md passo 3)",
         env!("CARGO_PKG_VERSION")
     );
 }

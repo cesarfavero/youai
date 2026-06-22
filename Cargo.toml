@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "youai-governor",
+    "youai-guard",
     "youai-node",
     "youai-worker",
     "youai-coordinator",

@@ -27,7 +27,7 @@ Report conduct issues to the maintainers via GitHub or security@youai.network.
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| Rust | stable (1.75+) | governor, node, coordinator |
+| Rust | stable (1.75+) | guard, node, coordinator |
 | Node.js | 20+ | youai-web (later phases) |
 | CMake | 3.20+ | llama.cpp builds |
 | CUDA | optional | GPU inference |
@@ -47,7 +47,7 @@ git checkout -b feat/short-description
 cargo fmt --all
 cargo clippy --workspace -- -D warnings
 cargo test --workspace
-git commit -m "feat(governor): add cgroup v2 memory cap"
+git commit -m "feat(guard): add cgroup v2 memory cap"
 ```
 
 **Commit message format** (Conventional Commits):
@@ -67,7 +67,7 @@ git commit -m "feat(governor): add cgroup v2 memory cap"
 | `test` | Tests only |
 | `chore` | Build, CI, tooling |
 
-**Scopes:** `governor`, `node`, `worker`, `coordinator`, `web`, `ci`, `docs`
+**Scopes:** `guard`, `node`, `worker`, `coordinator`, `web`, `ci`, `docs`
 
 ### 4. Open a Pull Request
 
@@ -80,7 +80,7 @@ git commit -m "feat(governor): add cgroup v2 memory cap"
 
 ```
 youai/
-├── youai-governor/      # Resource limits · sandbox · watchdog
+├── youai-guard/      # Resource limits · sandbox · watchdog
 ├── youai-node/          # CLI · install · config · start/pause
 ├── youai-worker/        # llama.cpp wrapper · inference
 ├── youai-coordinator/   # Routing · credit · node registry
@@ -91,9 +91,9 @@ youai/
 
 **Implementation order matters.** See [NEXT_STEPS.md](./NEXT_STEPS.md):
 
-1. Governor (resource limits) — **first**
+1. Guard (resource limits) — **first**
 2. Worker (local inference)
-3. Node CLI (integrate governor + worker)
+3. Node CLI (integrate guard + worker)
 4. Coordinator (network)
 5. Web (chat + credit)
 
@@ -121,13 +121,13 @@ Do not skip ahead without maintainer agreement.
 cargo test --workspace
 
 # Single crate
-cargo test -p youai-governor
+cargo test -p youai-guard
 
 # With output
 cargo test --workspace -- --nocapture
 ```
 
-Integration tests for governor **must** verify that resource limits are enforced (see NEXT_STEPS.md, Passo 3).
+Integration tests for guard **must** verify that resource limits are enforced (see NEXT_STEPS.md, Passo 3).
 
 ## Documentation
 
@@ -137,7 +137,7 @@ Integration tests for governor **must** verify that resource limits are enforced
 
 ## Security
 
-- Read [SECURITY.md](./SECURITY.md) before touching governor, sandbox, or network code
+- Read [SECURITY.md](./SECURITY.md) before touching guard, sandbox, or network code
 - Never commit API keys, tokens, or model files (`.gguf`)
 - Report vulnerabilities privately — do not open public issues
 

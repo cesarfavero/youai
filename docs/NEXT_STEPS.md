@@ -18,7 +18,7 @@ youai/
 ```
 
 **Fase atual:** 0 — pré-código (só documentação)  
-**Meta imediata:** Fase 0 dogfood → governor + llama.cpp local em 1 máquina  
+**Meta imediata:** Fase 0 dogfood → guard + llama.cpp local em 1 máquina  
 **Meta MVP:** 10–50 PCs · Nex-N2-mini · chat free · crédito básico
 
 ---
@@ -42,7 +42,7 @@ Marque conforme for fazendo:
 
 | Ferramenta | Pra quê | Verificar |
 |------------|---------|-----------|
-| **Rust** | governor, node, coordinator | `rustc --version` |
+| **Rust** | guard, node, coordinator | `rustc --version` |
 | **Go** (opcional) | coordinator alternativo | `go version` |
 | **Node 20+** | web chat depois | `node --version` |
 | **CMake + build tools** | compilar llama.cpp | `cmake --version` |
@@ -55,9 +55,9 @@ Marque conforme for fazendo:
 
 ```
 1. Docs legais          SECURITY.md · CONTRIBUTING.md
-2. youai-governor       limites RAM/CPU (sem rede ainda)
+2. youai-guard       limites RAM/CPU (sem rede ainda)
 3. youai-worker         llama.cpp single-node
-4. Governor + Worker    integração · provar que não estoura limite
+4. Guard + Worker       integração · provar que não estoura limite
 5. youai-coordinator    1 servidor · registra nós
 6. youai-node CLI       install · config · start · pause
 7. Rede 2–3 máquinas    2 PCs na mesma rede
@@ -65,7 +65,7 @@ Marque conforme for fazendo:
 9. Beta 10 pessoas      Discord/Telegram
 ```
 
-**Regra:** não começar pelo web nem pelo mobile. Governor primeiro.
+**Regra:** não começar pelo web nem pelo mobile. Guard primeiro.
 
 ---
 
@@ -90,13 +90,13 @@ Marque conforme for fazendo:
 **Objetivo:** estrutura de pastas vazia mas correta.
 
 **Pedir no Cursor:**
-> "Cria a estrutura do monorepo YouAI conforme MVP.md: youai-governor, youai-node, youai-worker, youai-coordinator, youai-web"
+> "Cria a estrutura do monorepo YouAI conforme MVP.md: youai-guard, youai-node, youai-worker, youai-coordinator, youai-web"
 
 **Estrutura alvo:**
 ```
 youai/
-├── Cargo.toml              # workspace Rust (governor, node, coordinator)
-├── youai-governor/
+├── Cargo.toml              # workspace Rust (guard, node, coordinator)
+├── youai-guard/
 ├── youai-node/
 ├── youai-worker/           # wrapper llama.cpp (pode ser Rust + FFI ou subprocess)
 ├── youai-coordinator/
@@ -115,19 +115,19 @@ youai/
 
 ---
 
-## Passo 3 — `youai-governor` POC (prioridade #1)
+## Passo 3 — `youai-guard` POC (prioridade #1)
 
 **Objetivo:** provar que limites funcionam **antes** de qualquer IA na rede.
 
 **Pedir no Cursor:**
-> "Implementa youai-governor POC em Rust: limite de RAM e CPU% no Linux com cgroups, watchdog que mata processo filho se furar"
+> "Implementa youai-guard POC em Rust: limite de RAM e CPU% no Linux com cgroups, watchdog que mata processo filho se furar"
 
 **Escopo mínimo:**
-- [ ] CLI: `youai-governor run --ram-max 8g --cpu-percent 30 -- <comando>`
+- [ ] CLI: `youai-guard run --ram-max 8g --cpu-percent 30 -- <comando>`
 - [ ] cgroup v2: memory.max + cpu.max
 - [ ] Loop a cada 500ms medindo uso real
 - [ ] Se passar do limite → SIGKILL no filho
-- [ ] Log local em `~/.youai/governor.log`
+- [ ] Log local em `~/.youai/guard.log`
 - [ ] Teste: rodar `stress` ou loop pesado e verificar que é morto
 
 **Plataformas MVP:**
@@ -171,15 +171,15 @@ youai/
 
 ---
 
-## Passo 5 — Integrar Governor + Worker
+## Passo 5 — Integrar Guard + Worker
 
 **Objetivo:** inferência rodando **dentro** do sandbox.
 
 **Pedir no Cursor:**
-> "Integra youai-worker para sempre rodar sob youai-governor com os limites do config"
+> "Integra youai-worker para sempre rodar sob youai-guard com os limites do config"
 
 **Checklist:**
-- [ ] `youai-node start` (primeira versão) só faz: governor → worker
+- [ ] `youai-node start` (primeira versão) só faz: guard → worker
 - [ ] Config em `~/.youai/config.toml`:
   ```toml
   [resources]
@@ -191,7 +191,7 @@ youai/
 - [ ] `youai-node pause` mata worker em < 2s
 - [ ] `youai-node status` mostra uso atual vs limite
 
-**Critério de sucesso:** com jogo ou stress no PC, governor pausa ou mantém teto.
+**Critério de sucesso:** com jogo ou stress no PC, guard pausa ou mantém teto.
 
 ---
 
@@ -297,9 +297,9 @@ Copie e cole conforme a fase:
 |------|-----------------|
 | Docs | `Lê docs/MVP.md e cria SECURITY.md + CONTRIBUTING.md + .gitignore` |
 | Scaffold | `Cria monorepo YouAI com workspace Rust conforme docs/MVP.md` |
-| Governor | `Implementa youai-governor POC Linux cgroups conforme docs/NEXT_STEPS.md passo 3` |
+| Guard | `Implementa youai-guard POC Linux cgroups conforme docs/NEXT_STEPS.md passo 3` |
 | Worker | `Setup youai-worker com llama.cpp + script de benchmark` |
-| Integração | `Integra governor + worker no youai-node start/pause/status` |
+| Integração | `Integra guard + worker no youai-node start/pause/status` |
 | Coordinator | `Implementa coordinator mínimo: register, heartbeat, nodes online` |
 | Web | `Cria youai-web chat mínimo com crédito` |
 | Beta | `Cria BETA_GUIDE.md e checklist de métricas` |
@@ -338,13 +338,13 @@ Copie e cole conforme a fase:
 
 | Semana | Entrega |
 |--------|---------|
-| **1** | Docs legais + scaffold + governor POC |
+| **1** | Docs legais + scaffold + guard POC |
 | **2** | Worker local + benchmark Nex-N2-mini |
-| **3** | youai-node CLI + governor integrado |
+| **3** | youai-node CLI + guard integrado |
 | **4** | Coordinator + 2 máquinas online |
 | **5** | Réplica round-robin + crédito básico |
 | **6** | Web chat + beta 10 pessoas |
-| **7–8** | Bugfix · GPU governor · estabilidade |
+| **7–8** | Bugfix · GPU guard · estabilidade |
 
 ---
 
@@ -376,7 +376,7 @@ youai-coordinator --port 8080 --db youai.db
 O MVP está pronto quando **todos** forem verdade:
 
 - [ ] ≥ 20 nós estáveis ao mesmo tempo
-- [ ] Governor: **0** casos de furar limite de RAM/GPU em teste de 24h
+- [ ] Guard: **0** casos de furar limite de RAM/GPU em teste de 24h
 - [ ] Pausar em < 2 segundos
 - [ ] Chat free funciona com crédito por contribuição
 - [ ] Código 100% open source no GitHub com SECURITY.md

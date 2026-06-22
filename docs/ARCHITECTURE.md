@@ -41,7 +41,7 @@ YouAI is a four-layer distributed system. Each layer has a single responsibility
 
 | Crate / App | Layer | Responsibility |
 |-------------|-------|----------------|
-| `youai-governor` | 1 | RAM/CPU/GPU caps · cgroup sandbox · watchdog |
+| `youai-guard` | 1 | RAM/CPU/GPU caps · cgroup sandbox · watchdog |
 | `youai-worker` | 1 | llama.cpp inference · reads `~/.youai/shards/` |
 | `youai-node` | 1 | CLI/GUI lib · config · start/pause/status |
 | `youai-coordinator` | 3 | Node registry · heartbeat · routing · credit |
@@ -53,10 +53,10 @@ On a contributor machine, three processes cooperate:
 
 ```
 ┌──────────────────────────────────────────┐
-│  youai-governor (Rust · ~5 MB)           │
+│  youai-guard (Rust · ~5 MB)           │
 │  ├── polls resources every 500ms         │
 │  ├── SIGKILL worker on limit breach      │
-│  └── logs to ~/.youai/governor.log       │
+│  └── logs to ~/.youai/guard.log          │
 └───────────────┬──────────────────────────┘
                 │ spawns & supervises
 ┌───────────────▼──────────────────────────┐
@@ -86,7 +86,7 @@ youai-coordinator
     ▼ signed inference job
 youai-node (replica round-robin)
     │
-    ▼ governor → worker
+    ▼ guard → worker
 llama.cpp (Nex-N2-mini GGUF)
     │
     ▼ tokens
@@ -100,7 +100,7 @@ User ← coordinator ← web
 | Routing | Replica round-robin | MoE expert sharding |
 | Models | Nex-N2-mini | N2-Pro, GLM-5.2 |
 | Mobile | — | Phase 4 |
-| GPU governor | Basic / NVML | Full thermal + pause |
+| GPU guard | Basic / NVML | Full thermal + pause |
 | Auth | Anonymous + device ID | OAuth, enterprise |
 
 ## Configuration
@@ -137,7 +137,7 @@ Transport: HTTP/JSON for MVP; gRPC for production scale.
 
 See [SECURITY.md](./SECURITY.md). Summary:
 
-- Governor is **independent** of worker — cannot be disabled by inference code
+- Guard is **independent** of worker — cannot be disabled by inference code
 - Worker runs in cgroup with `memory.max` and `cpu.max`
 - Coordinator never sends shell commands to nodes
 - Prompts are not exposed raw on community nodes (MVP limitation documented)

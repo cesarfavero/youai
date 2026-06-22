@@ -22,7 +22,7 @@ Rede global open source onde cada PC, celular e VPS contribui com uma fração d
 
 Sem equipe, o caminho é **dogfood em 1 máquina** — não pule etapas:
 
-1. **Governor** — provar que limites RAM/CPU funcionam (`youai-governor`)
+1. **Guard** — provar que limites RAM/CPU funcionam (`youai-guard`)
 2. **Worker** — llama.cpp local, sem rede (`youai-worker` + benchmark)
 3. **Node CLI** — `start` / `pause` / `status` integrando os dois
 4. **Coordinator** — só depois que 1 máquina está estável
@@ -36,7 +36,7 @@ Ver [NEXT_STEPS.md](docs/NEXT_STEPS.md) passo a passo.
 
 ```
 youai/
-├── youai-governor/      # limites RAM/CPU/GPU · watchdog
+├── youai-guard/         # limites RAM/CPU/GPU · watchdog
 ├── youai-node/          # CLI · config · start/pause/status
 ├── youai-worker/        # llama.cpp wrapper
 ├── youai-coordinator/   # registro de nós · roteamento · crédito
@@ -61,7 +61,7 @@ cargo fmt --all
 cargo clippy --workspace -- -D warnings
 
 # Binários (scaffold — ainda sem lógica completa)
-cargo run -p youai-governor -- --help
+cargo run -p youai-guard -- --help
 cargo run -p youai-node -- status
 cargo run -p youai-coordinator -- --port 8080
 ```

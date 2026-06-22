@@ -500,7 +500,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "youai-governor"
+name = "youai-guard"
 version = "0.1.0"
 dependencies = [
  "clap",

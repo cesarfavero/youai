@@ -4,7 +4,7 @@
 
 ## Component
 
-- [ ] youai-governor
+- [ ] youai-guard
 - [ ] youai-node
 - [ ] youai-worker
 - [ ] youai-coordinator
@@ -21,4 +21,4 @@
 
 ## Security note
 
-If this touches governor, sandbox, or network auth, describe how limits/trust boundaries are preserved.
+If this touches guard, sandbox, or network auth, describe how limits/trust boundaries are preserved.

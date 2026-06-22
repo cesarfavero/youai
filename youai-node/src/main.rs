@@ -19,7 +19,7 @@ enum Commands {
     Status,
     /// Pause contribution immediately
     Pause,
-    /// Start contributing (governor → worker → coordinator)
+    /// Start contributing (guard → worker → coordinator)
     Start {
         /// Coordinator URL
         #[arg(long)]

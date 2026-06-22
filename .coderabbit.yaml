@@ -14,7 +14,7 @@ reviews:
     base_branches:
       - main
   path_instructions:
-    - path: "youai-governor/**"
+    - path: "youai-guard/**"
       instructions: >
         Security-critical. Resource limits (RAM/CPU/GPU) must never be bypassable.
         Flag any code that weakens cgroup isolation, watchdog, or SIGKILL behavior.

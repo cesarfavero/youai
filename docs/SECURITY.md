@@ -27,7 +27,7 @@ We follow **responsible disclosure**. Please do **not** open public GitHub issue
 
 - Description of the vulnerability and its impact
 - Steps to reproduce (proof-of-concept if available)
-- Affected component (`youai-governor`, `youai-node`, `youai-worker`, `youai-coordinator`, `youai-web`)
+- Affected component (`youai-guard`, `youai-node`, `youai-worker`, `youai-coordinator`, `youai-web`)
 - Your environment (OS, version, hardware)
 - Your contact info for follow-up (optional: PGP key)
 
@@ -54,7 +54,7 @@ These constraints are enforced by design and must hold in every release:
 | Read files outside `~/.youai/` | Sandbox + filesystem isolation |
 | Open arbitrary inbound ports | Outbound-only connections to coordinator |
 | Install unsigned binaries | Verified releases with published build hashes |
-| Exceed user-configured resource limits | Independent `youai-governor` with hard caps |
+| Exceed user-configured resource limits | Independent `youai-guard` with hard caps |
 
 ### What a YouAI node **can** do (with explicit opt-in)
 
@@ -72,21 +72,21 @@ User prompts are **not** sent in plaintext to arbitrary contributor nodes. The c
 | Threat | Mitigation |
 |--------|------------|
 | Malicious node returns bad inference | Replica voting + consistency checks (phase 2) |
-| Resource limit bypass | Independent governor process; cgroup v2 hard caps; watchdog SIGKILL |
+| Resource limit bypass | Independent guard process; cgroup v2 hard caps; watchdog SIGKILL |
 | Model weight theft | Encrypted shards (future); TEE (future) |
 | Coordinator compromise | TLS, per-node auth tokens, minimal data retention |
 | Supply chain attack | Reproducible builds; signed releases; public CI logs |
 
-## Resource Governor Guarantees
+## Resource Guard Guarantees
 
-The `youai-governor` is a **separate process** from the inference worker:
+The `youai-guard` is a **separate process** from the inference worker:
 
 - Monitors CPU, RAM, GPU (when available), and temperature every 500ms
 - Kills the worker immediately if limits are exceeded
 - Circuit breaker: repeated violations → automatic pause
 - User can pause in < 2 seconds via `youai-node pause`
 
-If you observe a governor failure (resource limit exceeded without worker termination), treat it as a **critical** security issue and report immediately.
+If you observe a guard failure (resource limit exceeded without worker termination), treat it as a **critical** security issue and report immediately.
 
 ## Safe Defaults
 

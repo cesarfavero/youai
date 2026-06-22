@@ -36,7 +36,7 @@ Nome:     YouAI
 Tagline:  AI by you, for you.
 PT:       IA sua, feita por você.
 CLI:      youai-node
-Pacote:   youai-node, youai-governor, youai-coordinator
+Pacote:   youai-node, youai-guard, youai-coordinator
 Repo:     github.com/youai-network/youai (placeholder)
 ```
 
@@ -54,7 +54,7 @@ Não é somar RAM magicamente. É uma **colmeia MoE**: milhões de nós fracos, 
 
 1. **Opt-in total** — usuário define teto; sistema nunca ultrapassa
 2. **Open source desde o dia 0** — código, builds reproduzíveis, auditoria pública
-3. **Segurança primeiro** — sandbox, governor independente, prompt nunca cru no nó alheio
+3. **Segurança primeiro** — sandbox, guard independente, prompt nunca cru no nó alheio
 4. **Free por padrão** — uso básico sem cartão; crédito por contribuição
 5. **Nó fraco é válido** — celular 10% conta; VPS T4 50% conta mais
 6. **Falha é normal** — celular dorme, PC desliga; rede continua com réplicas
@@ -209,7 +209,7 @@ incentives:
 
 ---
 
-## Resource Governor — controle para não explodir o PC
+## Resource Guard — controle para não explodir o PC
 
 Camada **independente** do worker de inferência. Processo pequeno (Rust), alta prioridade de monitoramento, mata worker se furar limite.
 
@@ -248,7 +248,7 @@ ENTÃO → pausa imediata · job redireciona para outro nó
 
 ```
 ┌──────────────────────────────────────────┐
-│  youai-governor (Rust · ~5 MB)           │
+│  youai-guard (Rust · ~5 MB)           │
 │  ├── mede GPU/CPU/RAM/temp a cada 500ms  │
 │  ├── mata worker se furar limite         │
 │  └── métricas locais para o usuário      │
@@ -351,7 +351,7 @@ ENTÃO → pausa imediata · job redireciona para outro nó
 
 | Peça | Tecnologia | Motivo |
 |------|------------|--------|
-| Governor + Agent | **Rust** | seguro, leve, cross-platform |
+| Guard + Agent | **Rust** | seguro, leve, cross-platform |
 | Inferência | **llama.cpp** | GLM-5.2 GGUF já funciona; auditável |
 | CLI | `youai-node` | mesma lib do GUI |
 | GUI desktop | **Tauri** | leve vs Electron |
@@ -369,7 +369,7 @@ ENTÃO → pausa imediata · job redireciona para outro nó
 Provar em **4–8 semanas** que:
 
 1. 10–50 PCs podem formar um cluster estável
-2. Governor **nunca** fura limite configurado
+2. Guard **nunca** fura limite configurado
 3. Usuário contribui → ganha crédito → usa o chat free
 4. Tudo open source e auditável
 
@@ -385,7 +385,7 @@ Provar em **4–8 semanas** que:
 
 | # | Entregável | Descrição |
 |---|------------|-----------|
-| 1 | `youai-governor` | limites GPU/RAM/CPU · circuit breaker · watchdog |
+| 1 | `youai-guard` | limites GPU/RAM/CPU · circuit breaker · watchdog |
 | 2 | `youai-node` CLI | install, config, start, status, pause |
 | 3 | `youai-worker` | llama.cpp integrado · 1 shard/expert |
 | 4 | `youai-coordinator` | auth simples · roteamento · fila · crédito básico |
@@ -406,7 +406,7 @@ Provar em **4–8 semanas** que:
 ```
 1. Baixa youai-node (site / GitHub releases)
 2. Define limites: --gpu 30 --ram 8g
-3. Governor valida · worker sobe · agent registra no coordinator
+3. Guard valida · worker sobe · agent registra no coordinator
 4. Recebe shard/expert automático
 5. Ganha crédito por hora online
 6. Acessa youai.network/chat · gasta crédito
@@ -419,7 +419,7 @@ Provar em **4–8 semanas** que:
 
 ### Fase 0 — Dogfood (semana 1–2)
 - [ ] Repo GitHub público
-- [ ] Governor em Rust: RAM cap + CPU % no Linux
+- [ ] Guard em Rust: RAM cap + CPU % no Linux
 - [ ] llama.cpp local single-node (sem rede)
 - [ ] 3 devs, mesma rede Wi-Fi
 
@@ -434,7 +434,7 @@ Provar em **4–8 semanas** que:
 ### Fase 2 — Produto (mês 2–3)
 - [ ] GUI Tauri com sliders
 - [ ] Detecção de app pesado · pausa automática
-- [ ] GPU governor (NVML)
+- [ ] GPU guard (NVML)
 - [ ] Nex-N2-Pro tier agente
 - [ ] API pública · rate limit
 - [ ] Discord/Telegram comunidade · 500 beta
@@ -481,7 +481,7 @@ Provar em **4–8 semanas** que:
 
 | Risco | Mitigação |
 |-------|-----------|
-| Governor falha · PC explode | watchdog independente · testes automatizados · cgroup hard cap |
+| Guard falha · PC explode | watchdog independente · testes automatizados · cgroup hard cap |
 | Cold start · poucos nós | MVP regional · super-nó âncora do time |
 | App Store bloqueia mobile | Android primeiro · iOS sessão manual |
 | Roubo de weights | shards criptografados · TEE futuro |
@@ -495,7 +495,7 @@ Provar em **4–8 semanas** que:
 
 ```
 youai/
-├── youai-governor/      # limites de hardware
+├── youai-guard/      # limites de hardware
 ├── youai-node/          # CLI + lib compartilhada
 ├── youai-worker/        # llama.cpp wrapper
 ├── youai-coordinator/   # roteador + crédito + fila
@@ -530,7 +530,7 @@ youai/
 
 1. [ ] Validar nome **YouAI** · registrar domínio (`youai.network` / `youai.dev`)
 2. [ ] Criar org GitHub `youai-network`
-3. [ ] Scaffold `youai-governor` em Rust (Linux cgroup POC)
+3. [ ] Scaffold `youai-guard` em Rust (Linux cgroup POC)
 4. [ ] Baixar Nex-N2-mini quantizado · benchmark single-node
 5. [ ] Recrutar 10 beta testers com PC
 6. [ ] Escrever `SECURITY.md` e `CONTRIBUTING.md`
@@ -545,7 +545,7 @@ Este documento consolida a visão discutida:
 2. **Escala global** — 1M nós · MoE · réplicas · super-nós
 3. **Modelos frontier open** — GLM-5.2 · Nex-N2-Pro · quantização
 4. **YouAI Node** — GUI + CLI + mobile · limites · VPS enterprise
-5. **Governor** — nunca explodir PC/celular · 100% open source
+5. **Guard** — nunca explodir PC/celular · 100% open source
 6. **Economia free** — crédito por contribuição · tiers de modelo
 
 ---

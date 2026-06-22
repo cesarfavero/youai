@@ -1,6 +1,6 @@
-//! YouAI Resource Governor library.
+//! YouAI Resource Guard library.
 
-/// Governor poll interval in milliseconds (MVP default).
+/// Guard poll interval in milliseconds (MVP default).
 pub const DEFAULT_POLL_MS: u64 = 500;
 
 #[cfg(test)]
