@@ -1,0 +1,32 @@
+# CodeRabbit — free for public repos
+# Install app: https://github.com/apps/coderabbitai
+language: "en-US"
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+  path_instructions:
+    - path: "youai-governor/**"
+      instructions: >
+        Security-critical. Resource limits (RAM/CPU/GPU) must never be bypassable.
+        Flag any code that weakens cgroup isolation, watchdog, or SIGKILL behavior.
+    - path: "youai-node/**"
+      instructions: >
+        CLI must preserve user opt-in limits. Pause must be fast (<2s target).
+    - path: "youai-coordinator/**"
+      instructions: >
+        Network-facing code. Check auth, input validation, and TLS assumptions.
+    - path: "youai-worker/**"
+      instructions: >
+        Inference sandbox. Worker must only access ~/.youai/ paths.
+
+chat:
+  auto_reply: true

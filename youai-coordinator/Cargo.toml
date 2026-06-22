@@ -1,0 +1,19 @@
+[package]
+name = "youai-coordinator"
+description = "YouAI coordinator — node registry, routing, credit, job queue"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "youai-coordinator"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true

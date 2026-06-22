@@ -1,0 +1,57 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node / youai-web
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# YouAI local data & models
+.youai/
+*.gguf
+*.gguf.*
+*.bin
+models/
+shards/
+
+# llama.cpp (cloned locally for builds)
+llama.cpp/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Database (coordinator local dev)
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build & coverage
+coverage/
+*.profraw
+lcov.info
+
+# Temporary
+tmp/
+temp/
+*.tmp

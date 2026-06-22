@@ -1,0 +1,18 @@
+[package]
+name = "youai-worker"
+description = "YouAI inference worker — llama.cpp wrapper for local model execution"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "youai-worker"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

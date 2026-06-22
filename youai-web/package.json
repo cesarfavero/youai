@@ -1,0 +1,14 @@
+{
+  "name": "youai-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "YouAI web chat — credit dashboard and SSE streaming",
+  "scripts": {
+    "dev": "echo 'youai-web scaffold — Next.js setup pending (see docs/NEXT_STEPS.md passo 9)' && exit 0",
+    "build": "echo 'youai-web scaffold — build pending' && exit 0",
+    "lint": "echo 'youai-web scaffold — lint pending' && exit 0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

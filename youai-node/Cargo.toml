@@ -1,0 +1,18 @@
+[package]
+name = "youai-node"
+description = "YouAI node CLI — install, config, start, pause, status"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "youai-node"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
