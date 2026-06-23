@@ -4,11 +4,14 @@ use crate::gateway;
 use crate::priority;
 use crate::db::{Database, StoredNode};
 use crate::pipeline::{run_pipeline, worker_is_healthy};
-use crate::registry::{load_manifest, resolve_manifest_path, select_active_tier, RegistryManifest};
+use crate::registry::{
+    find_model_in_manifest, load_manifest, resolve_manifest_path, select_active_tier,
+    RegistryManifest,
+};
 use anyhow::{Context, Result};
 use axum::{
     body::Bytes,
-    extract::State,
+    extract::{Path, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse},
     routing::{get, post},
@@ -43,6 +46,7 @@ pub struct AppState {
     pub cache: Arc<Mutex<ResponseCache>>,
     pub nonces: NonceStore,
     pub manifest: Arc<RegistryManifest>,
+    pub manifest_raw: Arc<serde_json::Value>,
 }
 
 pub async fn serve(host: &str, port: u16, db_path: &str) -> Result<()> {
@@ -55,6 +59,10 @@ pub async fn serve(host: &str, port: u16, db_path: &str) -> Result<()> {
     }
 
     let manifest_path = resolve_manifest_path();
+    let manifest_raw_text = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("read registry from {}", manifest_path.display()))?;
+    let manifest_raw: serde_json::Value =
+        serde_json::from_str(&manifest_raw_text).context("parse registry manifest JSON")?;
     let manifest = load_manifest(&manifest_path)
         .with_context(|| format!("load registry from {}", manifest_path.display()))?;
     info!(
@@ -81,6 +89,7 @@ pub async fn serve(host: &str, port: u16, db_path: &str) -> Result<()> {
         cache: Arc::new(Mutex::new(ResponseCache::new())),
         nonces: NonceStore::new(),
         manifest: Arc::new(manifest),
+        manifest_raw: Arc::new(manifest_raw),
     };
 
     let app = Router::new()
@@ -92,6 +101,7 @@ pub async fn serve(host: &str, port: u16, db_path: &str) -> Result<()> {
         .route("/api/v1/nodes", get(list_nodes))
         .route("/api/v1/registry/manifest", get(registry_manifest))
         .route("/api/v1/registry/tier", get(registry_tier))
+        .route("/api/v1/registry/models/{id}", get(registry_model))
         .route("/api/v1/network/compute", get(network_compute))
         .route("/api/v1/gateway/upload", post(gateway::upload_not_ready))
         .route("/api/v1/gateway/url", post(gateway::url_not_ready))
@@ -166,6 +176,19 @@ async fn registry_tier(State(state): State<AppState>) -> Result<Json<RegistryTie
         pipeline_chains: chains,
         selection_basis: "compute_units".to_string(),
     }))
+}
+
+async fn registry_model(
+    State(state): State<AppState>,
+    Path(model_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let id = model_id.trim();
+    if id.is_empty() {
+        return Err(AppError::bad_request("model id is required"));
+    }
+    find_model_in_manifest(&state.manifest_raw, id)
+        .map(Json)
+        .ok_or_else(|| AppError::not_found(format!("model not found: {id}")))
 }
 
 async fn network_compute(State(state): State<AppState>) -> Result<Json<NetworkComputeResponse>, AppError> {
@@ -694,6 +717,13 @@ impl AppError {
     fn bad_gateway(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_GATEWAY,
+            message: message.into(),
+        }
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
             message: message.into(),
         }
     }

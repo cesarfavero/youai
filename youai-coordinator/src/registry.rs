@@ -146,9 +146,71 @@ pub fn node_cu(cpu_percent: u8, ram_max_mb: u32) -> u64 {
     node_compute_units(cpu_percent, ram_max_mb)
 }
 
+fn tier_sort_key(tier_id: &str) -> u32 {
+    tier_id
+        .strip_prefix("tier")
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Look up a model entry by `id` across all tiers in the raw manifest JSON.
+/// When the same model id appears in multiple tiers, returns the highest tier entry.
+pub fn find_model_in_manifest(
+    manifest: &serde_json::Value,
+    model_id: &str,
+) -> Option<serde_json::Value> {
+    let tiers = manifest.get("tiers")?.as_object()?;
+    let mut tier_ids: Vec<&String> = tiers.keys().collect();
+    tier_ids.sort_by_key(|id| tier_sort_key(id.as_str()));
+    tier_ids.reverse();
+
+    for tier_key in tier_ids {
+        let tier = &tiers[tier_key];
+        let models = tier.get("models")?.as_array()?;
+        for model in models {
+            let id = model.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let alt = model
+                .get("alternate_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if id == model_id || alt == model_id {
+                let mut out = serde_json::Map::new();
+                if let Some(tier_id) = tier.get("id") {
+                    out.insert("tier_id".to_string(), tier_id.clone());
+                }
+                if let Some(tier_name) = tier.get("display_name") {
+                    out.insert("tier_display_name".to_string(), tier_name.clone());
+                }
+                if let Some(obj) = model.as_object() {
+                    for (k, v) in obj {
+                        out.insert(k.clone(), v.clone());
+                    }
+                }
+                return Some(serde_json::Value::Object(out));
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_tier1_model_by_id() {
+        let path = resolve_manifest_path();
+        if !path.is_file() {
+            return;
+        }
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let model = find_model_in_manifest(&manifest, "smollm2-360m-instruct-q4_k_m").unwrap();
+        assert_eq!(
+            model.get("tier_id").and_then(|v| v.as_str()),
+            Some("tier1")
+        );
+    }
 
     #[test]
     fn tier1_with_two_mac_minis() {
