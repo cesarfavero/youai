@@ -1,6 +1,7 @@
 //! YouAI inference worker — runs llama.cpp and exposes a small HTTP API.
 
 pub mod llama;
+pub mod pipeline;
 pub mod server;
 pub mod shards;
 

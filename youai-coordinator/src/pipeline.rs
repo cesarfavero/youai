@@ -4,10 +4,16 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tracing::warn;
-use youai_common::{ChatStageInfo, InferRequest, InferResponse, RemoteShardSource};
+use uuid::Uuid;
+use youai_common::{
+    ChatStageInfo, InferRequest, InferResponse, PipelineStepRequest, PipelineStepResponse,
+    RemoteShardSource, PIPELINE_KIND_ACTIVATION,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PipelineBackend {
+    /// v3: layer-split GGUFs with activation passing between stages.
+    Activation,
     /// v2: distributed GGUF files; stage 0 fetches peer shards over HTTP.
     Gguf,
     /// v1: llama.cpp --rpc tensor offload.
@@ -85,6 +91,9 @@ pub async fn run_pipeline(
     }
 
     match detect_backend(stages)? {
+        PipelineBackend::Activation => {
+            run_pipeline_activation(client, health_client, stages, user_prompt, max_tokens).await
+        }
         PipelineBackend::Gguf => {
             run_pipeline_gguf(client, health_client, stages, user_prompt, max_tokens).await
         }
@@ -95,6 +104,20 @@ pub async fn run_pipeline(
 }
 
 fn detect_backend(stages: &[StoredNode]) -> Result<PipelineBackend, String> {
+    let activation_count = stages
+        .iter()
+        .filter(|n| n.pipeline_kind == PIPELINE_KIND_ACTIVATION)
+        .count();
+    if activation_count > 0 {
+        if activation_count != stages.len() {
+            return Err(
+                "pipeline activation backend requires pipeline_kind=activation on every stage"
+                    .to_string(),
+            );
+        }
+        return Ok(PipelineBackend::Activation);
+    }
+
     let total = stages[0].gguf_shard_total;
     if total >= 2 {
         for (expected, node) in stages.iter().enumerate() {
@@ -120,9 +143,158 @@ fn detect_backend(stages: &[StoredNode]) -> Result<PipelineBackend, String> {
     }
 
     Err(
-        "pipeline misconfigured: use gguf_shard_total>=2 for GGUF v2 or rpc_url on stages 1+ for RPC v1"
+        "pipeline misconfigured: use pipeline_kind=activation for v3, gguf_shard_total>=2 for GGUF v2, or rpc_url on stages 1+ for RPC v1"
             .to_string(),
     )
+}
+
+async fn run_pipeline_activation(
+    client: &Client,
+    health_client: &Client,
+    stages: &[StoredNode],
+    user_prompt: &str,
+    max_tokens: u32,
+) -> Result<(String, Vec<ChatStageInfo>, String, &'static str), String> {
+    if stages.len() != 2 {
+        return Err(format!(
+            "pipeline v3 activation mode supports exactly 2 stages (got {})",
+            stages.len()
+        ));
+    }
+
+    for node in stages {
+        if !worker_is_healthy(health_client, &node.worker_url).await {
+            return Err(format!(
+                "pipeline stage {} worker {} is unhealthy",
+                node.shard_stage, node.worker_url
+            ));
+        }
+    }
+
+    let session_id = Uuid::new_v4().to_string();
+    let head = &stages[0];
+    let tail = &stages[1];
+
+    let prefill = post_pipeline_step(
+        client,
+        head,
+        &PipelineStepRequest {
+            session_id: session_id.clone(),
+            op: "prefill-prompt".to_string(),
+            prompt: user_prompt.to_string(),
+            token_id: 0,
+            activation_b64: String::new(),
+            sample: false,
+        },
+    )
+    .await?;
+
+    let mut activation_b64 = prefill
+        .activation_b64
+        .ok_or_else(|| "stage 0 prefill produced no activation".to_string())?;
+
+    let mut generated = String::new();
+    let mut stage_texts = vec![String::new(); stages.len()];
+
+    for token_idx in 0..max_tokens {
+        let sampled = post_pipeline_step(
+            client,
+            tail,
+            &PipelineStepRequest {
+                session_id: session_id.clone(),
+                op: "forward-activation".to_string(),
+                prompt: String::new(),
+                token_id: 0,
+                activation_b64: activation_b64.clone(),
+                sample: true,
+            },
+        )
+        .await?;
+
+        let token_id = sampled
+            .token_id
+            .ok_or_else(|| "tail stage produced no token_id".to_string())?;
+        if let Some(piece) = sampled.text {
+            generated.push_str(&piece);
+            stage_texts[1].push_str(&piece);
+        }
+
+        if token_idx + 1 >= max_tokens {
+            break;
+        }
+
+        let decoded = post_pipeline_step(
+            client,
+            head,
+            &PipelineStepRequest {
+                session_id: session_id.clone(),
+                op: "decode-token".to_string(),
+                prompt: String::new(),
+                token_id,
+                activation_b64: String::new(),
+                sample: false,
+            },
+        )
+        .await?;
+
+        activation_b64 = decoded
+            .activation_b64
+            .ok_or_else(|| "stage 0 decode produced no activation".to_string())?;
+    }
+
+    stage_texts[0] = format!("[activation prefill+decode @ {}]", head.worker_url);
+
+    let stages_out: Vec<ChatStageInfo> = stages
+        .iter()
+        .enumerate()
+        .map(|(idx, node)| ChatStageInfo {
+            node_id: node.id.clone(),
+            node_name: node.name.clone(),
+            shard_stage: node.shard_stage,
+            partial_text: stage_texts[idx].clone(),
+        })
+        .collect();
+
+    Ok((
+        generated,
+        stages_out,
+        head.model.clone(),
+        "pipeline_activation",
+    ))
+}
+
+async fn post_pipeline_step(
+    client: &Client,
+    node: &StoredNode,
+    req: &PipelineStepRequest,
+) -> Result<PipelineStepResponse, String> {
+    let url = format!("{}/pipeline/step", node.worker_url.trim_end_matches('/'));
+    let response = client
+        .post(&url)
+        .json(req)
+        .send()
+        .await
+        .map_err(|err| format!("pipeline step request failed: {err}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "pipeline step on {} (stage {}) returned {status}: {text}",
+            node.name, node.shard_stage
+        ));
+    }
+
+    let body = response
+        .json::<PipelineStepResponse>()
+        .await
+        .map_err(|err| format!("invalid pipeline step response: {err}"))?;
+    if !body.ok {
+        return Err(body
+            .error
+            .unwrap_or_else(|| "pipeline step returned ok=false".to_string()));
+    }
+    Ok(body)
 }
 
 async fn run_pipeline_gguf(

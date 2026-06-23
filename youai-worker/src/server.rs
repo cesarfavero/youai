@@ -1,4 +1,7 @@
 use crate::llama::{default_timeout, run_inference, InferenceConfig};
+use crate::pipeline::{
+    default_pipeline_step_bin, default_session_root, run_pipeline_step, PipelineStepConfig,
+};
 use anyhow::{Context, Result};
 use axum::{
     body::Body,
@@ -15,7 +18,9 @@ use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 use youai_common::parse_gguf_split_filename;
-use youai_common::{HealthResponse, InferRequest, InferResponse};
+use youai_common::{
+    HealthResponse, InferRequest, InferResponse, PipelineStepRequest, PipelineStepResponse,
+};
 
 #[derive(Clone)]
 pub struct WorkerState {
@@ -31,6 +36,7 @@ pub async fn serve(host: &str, port: u16, state: WorkerState) -> Result<()> {
         .route("/health", get(health))
         .route("/model/shard", get(model_shard))
         .route("/infer", post(infer))
+        .route("/pipeline/step", post(pipeline_step))
         .layer(TraceLayer::new_for_http())
         .with_state(app_state);
 
@@ -94,6 +100,55 @@ async fn model_shard(State(state): State<Arc<WorkerState>>) -> impl IntoResponse
     }
 
     (StatusCode::OK, headers, Body::from(bytes)).into_response()
+}
+
+async fn pipeline_step(
+    State(state): State<Arc<WorkerState>>,
+    Json(body): Json<PipelineStepRequest>,
+) -> impl IntoResponse {
+    let config = PipelineStepConfig {
+        pipeline_step_bin: default_pipeline_step_bin(),
+        model_path: state.model_path.clone(),
+        session_root: default_session_root(),
+        timeout: default_timeout(),
+    };
+
+    let result = tokio::task::spawn_blocking(move || run_pipeline_step(&config, &body)).await;
+
+    match result {
+        Ok(Ok(outcome)) => (
+            StatusCode::OK,
+            Json(PipelineStepResponse {
+                ok: true,
+                op: outcome.op,
+                n_past: outcome.n_past,
+                n_embd: outcome.n_embd,
+                token_id: outcome.token_id,
+                text: outcome.text,
+                activation_b64: outcome.activation_b64,
+                error: None,
+            }),
+        )
+            .into_response(),
+        Ok(Err(err)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(PipelineStepResponse {
+                ok: false,
+                error: Some(err.to_string()),
+                ..Default::default()
+            }),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(PipelineStepResponse {
+                ok: false,
+                error: Some(err.to_string()),
+                ..Default::default()
+            }),
+        )
+            .into_response(),
+    }
 }
 
 async fn infer(

@@ -20,6 +20,7 @@ pub struct StoredNode {
     pub rpc_url: String,
     pub gguf_shard_index: u16,
     pub gguf_shard_total: u16,
+    pub pipeline_kind: String,
 }
 
 pub struct Database {
@@ -28,7 +29,8 @@ pub struct Database {
 
 const NODE_SELECT: &str =
     "SELECT id, token, name, region, worker_url, model, last_heartbeat, created_at,
-    shard_group, shard_stage, shard_total_stages, rpc_url, gguf_shard_index, gguf_shard_total FROM nodes";
+    shard_group, shard_stage, shard_total_stages, rpc_url, gguf_shard_index, gguf_shard_total,
+    pipeline_kind FROM nodes";
 
 impl Database {
     pub fn open(path: &Path) -> Result<Self> {
@@ -84,6 +86,10 @@ impl Database {
             "ALTER TABLE nodes ADD COLUMN gguf_shard_total INTEGER NOT NULL DEFAULT 1",
             [],
         );
+        let _ = self.conn.execute(
+            "ALTER TABLE nodes ADD COLUMN pipeline_kind TEXT NOT NULL DEFAULT ''",
+            [],
+        );
         Ok(())
     }
 
@@ -92,9 +98,10 @@ impl Database {
             r#"
             INSERT INTO nodes (
                 id, token, name, region, worker_url, model, last_heartbeat, created_at,
-                shard_group, shard_stage, shard_total_stages, rpc_url, gguf_shard_index, gguf_shard_total
+                shard_group, shard_stage, shard_total_stages, rpc_url, gguf_shard_index, gguf_shard_total,
+                pipeline_kind
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             ON CONFLICT(id) DO UPDATE SET
                 token = excluded.token,
                 name = excluded.name,
@@ -107,7 +114,8 @@ impl Database {
                 shard_total_stages = excluded.shard_total_stages,
                 rpc_url = excluded.rpc_url,
                 gguf_shard_index = excluded.gguf_shard_index,
-                gguf_shard_total = excluded.gguf_shard_total
+                gguf_shard_total = excluded.gguf_shard_total,
+                pipeline_kind = excluded.pipeline_kind
             "#,
             params![
                 node.id,
@@ -124,6 +132,7 @@ impl Database {
                 node.rpc_url,
                 node.gguf_shard_index,
                 node.gguf_shard_total,
+                node.pipeline_kind,
             ],
         )?;
         Ok(())
@@ -306,6 +315,7 @@ fn map_stored_node(row: &Row<'_>) -> rusqlite::Result<StoredNode> {
         rpc_url: row.get(11)?,
         gguf_shard_index: row.get(12)?,
         gguf_shard_total: row.get(13)?,
+        pipeline_kind: row.get(14)?,
     })
 }
 
@@ -325,6 +335,7 @@ fn map_node_info(row: &Row<'_>) -> rusqlite::Result<NodeInfo> {
         rpc_url: row.get(11)?,
         gguf_shard_index: row.get(12)?,
         gguf_shard_total: row.get(13)?,
+        pipeline_kind: row.get(14)?,
     })
 }
 

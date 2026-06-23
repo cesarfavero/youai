@@ -46,6 +46,10 @@ Desktop.ini
 *.swo
 *~
 
+# Native (cmake build artifacts)
+native/build/
+native/build-*/
+
 # Build & coverage
 coverage/
 *.profraw

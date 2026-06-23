@@ -47,7 +47,8 @@ impl NodeRuntime {
             "spawning worker under guard"
         );
 
-        let worker_child = Command::new(&guard_bin)
+        let mut worker_cmd = Command::new(&guard_bin);
+        worker_cmd
             .arg("run")
             .arg("--ram-max")
             .arg(&config.resources.ram_max)
@@ -68,11 +69,13 @@ impl NodeRuntime {
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .with_context(|| {
-                format!("spawn {} -> {}", guard_bin.display(), worker_bin.display())
-            })?;
+            .stderr(Stdio::piped());
+        if let Ok(dir) = std::env::var("YOUAI_BIN_DIR") {
+            worker_cmd.env("YOUAI_BIN_DIR", dir);
+        }
+        let worker_child = worker_cmd.spawn().with_context(|| {
+            format!("spawn {} -> {}", guard_bin.display(), worker_bin.display())
+        })?;
 
         wait_for_worker_health(&worker_health_url(&config.worker_host, config.worker_port)).await?;
 
@@ -332,6 +335,7 @@ async fn register_or_reuse(
             rpc_url: config.rpc_url.clone().unwrap_or_default(),
             gguf_shard_index: config.shard.gguf_shard_index,
             gguf_shard_total: config.shard.gguf_shard_total,
+            pipeline_kind: config.shard.pipeline_kind.clone(),
         })
         .send()
         .await

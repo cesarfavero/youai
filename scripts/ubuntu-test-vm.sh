@@ -167,6 +167,62 @@ tail -5 /tmp/youai-node.log || true
 START
 }
 
+start_node_activation() {
+  bootstrap
+  ensure_worker_port_forward
+  echo "Starting youai-node (pipeline v3 stage 1) in Colima Ubuntu..."
+  echo "  Coordinator (Mac): ${COORDINATOR_URL}"
+  echo "  Worker advertise: ${WORKER_ADVERTISE}"
+
+  colima_sh bash -s <<START
+set -euo pipefail
+export HOME="\${HOME:-/home/\$(whoami)}"
+source "\$HOME/.cargo/env"
+export CARGO_TARGET_DIR=${VM_TARGET_DIR}
+export PATH=${VM_TARGET_DIR}/release:\$PATH
+export YOUAI_BIN_DIR=${VM_TARGET_DIR}/release
+mkdir -p "\$HOME/.youai/pipeline-stages"
+MAC_STAGES="/Users/cesarfavero/.youai/pipeline-stages"
+STAGE1="\$(ls "\$MAC_STAGES"/*-stage01-of-02.gguf 2>/dev/null | head -1 || true)"
+if [[ -z "\$STAGE1" ]]; then
+  echo "Mac pipeline stage 1 GGUF not found. Run: ./scripts/setup-pipeline-activation-mac.sh" >&2
+  exit 1
+fi
+cp -f "\$STAGE1" "\$HOME/.youai/pipeline-stages/"
+STAGE_VM="\$HOME/.youai/pipeline-stages/\$(basename "\$STAGE1")"
+
+export YOUAI_PIPELINE_STEP_OUT="\${YOUAI_BIN_DIR}/youai-pipeline-step"
+${ROOT}/scripts/build-pipeline-step.sh
+
+youai-node pause 2>/dev/null || true
+pkill -f 'youai-worker serve' 2>/dev/null || true
+pkill -f 'youai-guard' 2>/dev/null || true
+if [[ -f /tmp/youai-node.pid ]]; then rm -f /tmp/youai-node.pid; fi
+
+youai-node config \
+  --name ubuntu-colima \
+  --coordinator ${COORDINATOR_URL} \
+  --worker-host 0.0.0.0 \
+  --worker-port ${WORKER_PORT} \
+  --worker-advertise-url ${WORKER_ADVERTISE} \
+  --shard-group default-pipeline \
+  --shard-stage 1 \
+  --shard-total-stages 2 \
+  --pipeline-kind activation \
+  --gguf-shard-index 0 \
+  --gguf-shard-total 1 \
+  --clear-rpc-url \
+  --model-path "\$STAGE_VM" \
+  --cpu-percent 30 \
+  --ram-max 2g
+
+nohup youai-node start > /tmp/youai-node.log 2>&1 &
+echo \$! > /tmp/youai-node.pid
+sleep 2
+tail -5 /tmp/youai-node.log || true
+START
+}
+
 start_node() {
   bootstrap
   ensure_worker_port_forward
@@ -278,13 +334,14 @@ case "${cmd}" in
   shell) shell ;;
   start-node) start_node ;;
   start-node-gguf) start_node_gguf ;;
+  start-node-activation) start_node_activation ;;
   status) status ;;
   logs) logs ;;
   pause) pause_node ;;
   destroy) destroy ;;
   -h|--help)
     cat <<EOF
-Usage: $0 {create|start-node|start-node-gguf|status|logs|shell|pause|destroy}
+Usage: $0 {create|start-node|start-node-gguf|start-node-activation|status|logs|shell|pause|destroy}
 
 Prereq: brew install colima lima && colima start
 

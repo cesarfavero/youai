@@ -54,6 +54,9 @@ enum Commands {
         gguf_shard_index: Option<u16>,
         #[arg(long)]
         gguf_shard_total: Option<u16>,
+        /// Pipeline backend: activation (v3), or empty for auto/v1/v2.
+        #[arg(long)]
+        pipeline_kind: Option<String>,
     },
     /// Configure resource limits and defaults
     Config {
@@ -94,6 +97,8 @@ enum Commands {
         gguf_shard_index: Option<u16>,
         #[arg(long)]
         gguf_shard_total: Option<u16>,
+        #[arg(long)]
+        pipeline_kind: Option<String>,
     },
 }
 
@@ -135,6 +140,7 @@ async fn run() -> Result<()> {
             clear_rpc_url,
             gguf_shard_index,
             gguf_shard_total,
+            pipeline_kind,
         } => {
             let mut config = load_config().context("load config")?;
             apply_overrides(
@@ -157,6 +163,7 @@ async fn run() -> Result<()> {
                 gguf_shard_index,
                 gguf_shard_total,
             );
+            apply_pipeline_kind(&mut config, pipeline_kind);
             if let Some(url) = worker_advertise_url {
                 config.worker_advertise_url = Some(url);
             }
@@ -196,6 +203,7 @@ async fn run() -> Result<()> {
             clear_rpc_url,
             gguf_shard_index,
             gguf_shard_total,
+            pipeline_kind,
         } => {
             let mut config = load_config().context("load config")?;
             apply_overrides(
@@ -218,6 +226,7 @@ async fn run() -> Result<()> {
                 gguf_shard_index,
                 gguf_shard_total,
             );
+            apply_pipeline_kind(&mut config, pipeline_kind);
             if let Some(url) = worker_advertise_url {
                 config.worker_advertise_url = Some(url);
             }
@@ -307,5 +316,11 @@ fn apply_shard_overrides(
     }
     if let Some(total) = gguf_shard_total {
         config.shard.gguf_shard_total = total;
+    }
+}
+
+fn apply_pipeline_kind(config: &mut NodeConfig, pipeline_kind: Option<String>) {
+    if let Some(kind) = pipeline_kind {
+        config.shard.pipeline_kind = kind;
     }
 }

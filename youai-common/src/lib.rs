@@ -66,7 +66,13 @@ pub struct ShardConfig {
     /// Total GGUF splits for this model (1 = full unsplit model).
     #[serde(default = "default_gguf_shard_total")]
     pub gguf_shard_total: u16,
+    /// Pipeline backend: "" (auto), "gguf", or "activation" (v3).
+    #[serde(default)]
+    pub pipeline_kind: String,
 }
+
+/// Pipeline v3: pass activations between stages (no full GGUF assembly on stage 0).
+pub const PIPELINE_KIND_ACTIVATION: &str = "activation";
 
 fn default_gguf_shard_total() -> u16 {
     1
@@ -80,6 +86,7 @@ impl Default for ShardConfig {
             total_stages: default_shard_total_stages(),
             gguf_shard_index: 0,
             gguf_shard_total: default_gguf_shard_total(),
+            pipeline_kind: String::new(),
         }
     }
 }
@@ -402,6 +409,8 @@ pub struct RegisterNodeRequest {
     pub gguf_shard_index: u16,
     #[serde(default = "default_gguf_shard_total")]
     pub gguf_shard_total: u16,
+    #[serde(default)]
+    pub pipeline_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -437,6 +446,8 @@ pub struct NodeInfo {
     pub gguf_shard_index: u16,
     #[serde(default = "default_gguf_shard_total")]
     pub gguf_shard_total: u16,
+    #[serde(default)]
+    pub pipeline_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -518,6 +529,48 @@ pub struct InferRequest {
 pub struct InferResponse {
     pub text: String,
     pub model: String,
+}
+
+/// Worker pipeline v3 step (activation passing).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineStepRequest {
+    pub session_id: String,
+    /// prefill-prompt | decode-token | forward-activation
+    pub op: String,
+    #[serde(default)]
+    pub prompt: String,
+    #[serde(default)]
+    pub token_id: u32,
+    /// Base64 f32 activation bytes (forward-activation input from coordinator).
+    #[serde(default)]
+    pub activation_b64: String,
+    #[serde(default = "default_true")]
+    pub sample: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PipelineStepResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub op: String,
+    #[serde(default)]
+    pub n_past: i32,
+    #[serde(default)]
+    pub n_embd: i32,
+    #[serde(default)]
+    pub token_id: Option<u32>,
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Base64 f32 activation produced by this stage (for coordinator handoff).
+    #[serde(default)]
+    pub activation_b64: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

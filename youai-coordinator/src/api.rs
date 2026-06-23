@@ -126,6 +126,7 @@ async fn register_node(
             rpc_url: body.rpc_url.clone(),
             gguf_shard_index: body.gguf_shard_index,
             gguf_shard_total: body.gguf_shard_total,
+            pipeline_kind: body.pipeline_kind.clone(),
         };
         db.upsert_node(&updated)
             .map_err(|err| AppError::internal(err.to_string()))?;
@@ -168,6 +169,7 @@ async fn register_node(
         rpc_url: body.rpc_url,
         gguf_shard_index: body.gguf_shard_index,
         gguf_shard_total: body.gguf_shard_total,
+        pipeline_kind: body.pipeline_kind,
     };
 
     db.upsert_node(&node)
