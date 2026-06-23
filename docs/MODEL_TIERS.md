@@ -156,21 +156,28 @@ export YOUAI_BIN_DIR="$PWD/target/release"
 youai-node start
 ```
 
-### 3.3 Critérios para subir de tier
+### 3.3 Critérios para subir de tier (poder computacional)
 
-O coordinator calcula periodicamente:
+O coordinator calcula periodicamente com base em **compute units (CU)**, não número de pessoas:
 
 ```text
-tier_ativo = max { tierN | rede_satisfaz(tierN.network_requirements) }
+compute_units(nó) = cpu_percent × ram_max_mb ÷ 100
+network_cu = Σ compute_units(nós online)
+tier_ativo = max { tierN | network_cu ≥ tierN.min_compute_units ∧ pipeline_chains ok }
 ```
 
 | Métrica | Como medir |
 |---------|------------|
-| `contributors_online` | Nós com heartbeat < 90s e `shard_total_stages` ou réplica |
-| `total_ram_gb` | Soma de `ram_max` declarado pelos nós online |
+| `network_compute_units` | Soma de CU dos nós com heartbeat < 90s |
 | `pipeline_chains` | Cadeias completas `default-pipeline` por tier |
-| `error_rate` | Falhas de inferência / total (últimas 24h) |
-| `p95_latency` | Tempo de resposta chat pipeline |
+| `contributor_score` | Uptime (heartbeats) — **prioridade de resposta**, não tier |
+| `error_rate` | Falhas de inferência / total (últimas 24h) — roadmap |
+| `p95_latency` | Tempo de resposta chat pipeline — roadmap |
+
+**Exemplo Mac Mini (30% CPU, 2 GB RAM):** `614 CU` por nó.  
+**Tier 1** exige `1000 CU` + 1 pipeline chain → ~2 Mac Minis.
+
+API: `GET /api/v1/registry/tier` · `GET /api/v1/network/compute`
 
 **Regra de histerese:** para **descer** tier, limiar inferior (ex: 80% do mínimo) evita flapping.
 
@@ -295,15 +302,18 @@ Critérios usados na pesquisa (junho 2026):
 
 ---
 
-### 3.6 Matriz rede → tier → modelo
+### 3.6 Matriz CU → tier → modelo
 
-| Contribuintes online | RAM agregada (est.) | Tier | Modelo primário |
-|---------------------|---------------------|------|-----------------|
-| 2–9 | 4–20 GB | tier1 | SmolLM2-360M |
-| 10–99 | 20–200 GB | tier2 | Qwen2.5-1.5B |
-| 100–999 | 200 GB–2 TB | tier3 | Qwen2.5-3B |
-| 1 000–9 999 | 2–20 TB | tier4 | Qwen2.5-7B (sharded) |
-| 10 000+ | 20 TB+ | tier5 | Qwen2.5-14B (ou 32B) |
+| network_cu | Tier | Modelo primário |
+|------------|------|-----------------|
+| 1 000+ | tier1 | SmolLM2-360M |
+| 6 000+ | tier2 | Qwen2.5-1.5B |
+| 60 000+ | tier3 | Qwen2.5-3B |
+| 600 000+ | tier4 | Qwen2.5-7B (sharded) |
+| 6 000 000+ | tier5 | Qwen2.5-14B (ou 32B) |
+
+Quem contribui mais CU **não** força tier superior sozinho — tier é **soma da rede**.  
+Quem contribui mais ganha **prioridade de resposta** e cache mais longo (`contributor_score`).
 
 ### 3.7 Política de actualização de modelos
 
@@ -403,22 +413,37 @@ Subir tier é a alavanca principal; template SmolLM2 no tier1 melhora instruct s
 
 ---
 
-## 8. Roadmap de implementação
+## 8. Cache e pré-processamento (antes da rede)
+
+Para não “sofrer com a rede” em cada request:
+
+| Camada | O quê | Estado |
+|--------|-------|--------|
+| **Response cache** | Prompt+tier+mode → resposta (TTL 1h / 24h contribuinte) | ✅ coordinator |
+| **Registry local** | Manifest em memória no arranque | ✅ coordinator |
+| **Chat template / EOS** | Normalizar prompt antes do pipeline | 🔜 |
+| **Gateway paralelo** | Upload/URL/busca fora dos nós | 🔜 infra separada |
+| **Edge CDN** | Manifest + assets estáticos | 🔜 |
+
+Cache hit devolve `cached: true` na resposta — transparente ao utilizador.
+
+## 9. Roadmap de implementação
 
 | # | Entrega | Componente |
 |---|---------|------------|
-| 1 | `registry/manifest.json` tier1 | repo |
-| 2 | `GET /api/v1/registry/tier` (estático) | coordinator |
-| 3 | Verificação SHA256 no node start | youai-node |
-| 4 | Métricas de rede → escolha tier | coordinator |
-| 5 | `youai-node models update` | CLI |
-| 6 | Canary rollout | coordinator |
-| 7 | contributor_score + early access | coordinator + app |
-| 8 | tier2 manifest + download automático | registry |
+| 1 | `registry/manifest.json` tier1 | repo ✅ |
+| 2 | `GET /api/v1/registry/tier` + compute | coordinator ✅ |
+| 3 | HMAC heartbeat + anti-replay | coordinator + node ✅ |
+| 4 | Response cache | coordinator ✅ |
+| 5 | Verificação SHA256 no node start | youai-node |
+| 6 | `youai-node models update` | CLI |
+| 7 | Canary rollout | coordinator |
+| 8 | contributor_score → fila prioritária | coordinator ✅ parcial |
+| 9 | tier2 manifest + download automático | registry |
 
 ---
 
-## 9. Transparência (o que o utilizador vê)
+## 10. Transparência (o que o utilizador vê)
 
 No app / `youai-node status`:
 

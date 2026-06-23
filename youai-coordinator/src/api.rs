@@ -1,7 +1,11 @@
+use crate::auth::{self, NonceStore};
+use crate::cache::ResponseCache;
 use crate::db::{Database, StoredNode};
 use crate::pipeline::{run_pipeline, worker_is_healthy};
+use crate::registry::{load_manifest, resolve_manifest_path, select_active_tier, RegistryManifest};
 use anyhow::{Context, Result};
 use axum::{
+    body::Bytes,
     extract::State,
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse},
@@ -18,9 +22,10 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{info, warn};
 use uuid::Uuid;
 use youai_common::{
-    ChatRequest, ChatResponse, ChatRoutingMode, HeartbeatRequest, InferRequest, InferResponse,
-    NodesResponse, PruneNodesResponse, RegisterNodeRequest, RegisterNodeResponse,
-    DEFAULT_PIPELINE_GROUP,
+    compute::node_compute_units, signing, ChatRequest, ChatResponse, ChatRoutingMode,
+    HeartbeatRequest, InferRequest, InferResponse, NetworkComputeResponse, NodesResponse,
+    PruneNodesResponse, RegisterNodeRequest, RegisterNodeResponse, RegistryTierResponse,
+    SignedChatRequest, DEFAULT_PIPELINE_GROUP,
 };
 
 const TOKEN_HEADER: &str = "x-youai-token";
@@ -32,6 +37,9 @@ pub struct AppState {
     pub http: Client,
     pub health_http: Client,
     pub rr: Arc<AtomicUsize>,
+    pub cache: Arc<Mutex<ResponseCache>>,
+    pub nonces: NonceStore,
+    pub manifest: Arc<RegistryManifest>,
 }
 
 pub async fn serve(host: &str, port: u16, db_path: &str) -> Result<()> {
@@ -41,6 +49,19 @@ pub async fn serve(host: &str, port: u16, db_path: &str) -> Result<()> {
         if removed > 0 {
             info!(removed, "pruned stale/duplicate nodes on startup");
         }
+    }
+
+    let manifest_path = resolve_manifest_path();
+    let manifest = load_manifest(&manifest_path)
+        .with_context(|| format!("load registry from {}", manifest_path.display()))?;
+    info!(
+        path = %manifest_path.display(),
+        tiers = manifest.tiers.len(),
+        "registry manifest loaded"
+    );
+
+    if auth::dev_mode_enabled() {
+        warn!("YOUAI_DEV_MODE=1 — HMAC verification disabled (dogfood only)");
     }
 
     let state = AppState {
@@ -54,6 +75,9 @@ pub async fn serve(host: &str, port: u16, db_path: &str) -> Result<()> {
             .build()
             .context("build health HTTP client")?,
         rr: Arc::new(AtomicUsize::new(0)),
+        cache: Arc::new(Mutex::new(ResponseCache::new())),
+        nonces: NonceStore::new(),
+        manifest: Arc::new(manifest),
     };
 
     let app = Router::new()
@@ -63,6 +87,9 @@ pub async fn serve(host: &str, port: u16, db_path: &str) -> Result<()> {
         .route("/api/v1/nodes/heartbeat", post(heartbeat))
         .route("/api/v1/nodes/prune", post(prune_nodes))
         .route("/api/v1/nodes", get(list_nodes))
+        .route("/api/v1/registry/manifest", get(registry_manifest))
+        .route("/api/v1/registry/tier", get(registry_tier))
+        .route("/api/v1/network/compute", get(network_compute))
         .route("/api/v1/chat", post(chat))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
@@ -93,6 +120,58 @@ async fn chat_ui() -> impl IntoResponse {
     resp
 }
 
+fn network_snapshot(
+    state: &AppState,
+) -> Result<(Vec<StoredNode>, u64, u32, crate::registry::TierSelection), AppError> {
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| AppError::internal("db lock poisoned"))?;
+    let online = db
+        .online_nodes()
+        .map_err(|err| AppError::internal(err.to_string()))?;
+    let network_cu = db.network_compute_units(&online);
+    let chains = db.count_pipeline_chains(&online);
+    let tier = select_active_tier(&state.manifest, network_cu, chains);
+    Ok((online, network_cu, chains, tier))
+}
+
+async fn registry_manifest(State(_state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
+    let path = resolve_manifest_path();
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|err| AppError::internal(format!("read manifest: {err}")))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|err| AppError::internal(format!("parse manifest: {err}")))?;
+    Ok(Json(value))
+}
+
+async fn registry_tier(State(state): State<AppState>) -> Result<Json<RegistryTierResponse>, AppError> {
+    let (_, network_cu, chains, tier) = network_snapshot(&state)?;
+    Ok(Json(RegistryTierResponse {
+        active_tier: tier.active_tier.clone(),
+        display_name: tier.display_name.clone(),
+        model_id: tier.model_id.clone(),
+        network_compute_units: network_cu,
+        min_compute_units: tier.min_compute_units,
+        next_tier: tier.next_tier.clone(),
+        next_tier_compute_needed: tier
+            .next_tier_min_cu
+            .map(|next| next.saturating_sub(network_cu)),
+        pipeline_chains: chains,
+        selection_basis: "compute_units".to_string(),
+    }))
+}
+
+async fn network_compute(State(state): State<AppState>) -> Result<Json<NetworkComputeResponse>, AppError> {
+    let (online, network_cu, chains, tier) = network_snapshot(&state)?;
+    Ok(Json(NetworkComputeResponse {
+        total_compute_units: network_cu,
+        online_nodes: online.len() as u32,
+        pipeline_chains: chains,
+        active_tier: tier.active_tier,
+    }))
+}
+
 async fn register_node(
     State(state): State<AppState>,
     Json(body): Json<RegisterNodeRequest>,
@@ -106,6 +185,9 @@ async fn register_node(
         .db
         .lock()
         .map_err(|_| AppError::internal("db lock poisoned"))?;
+
+    let cpu_percent = body.cpu_percent;
+    let ram_max_mb = body.ram_max_mb;
 
     if let Some(existing) = db
         .find_node_by_identity(&body.name, &body.worker_url)
@@ -127,24 +209,19 @@ async fn register_node(
             gguf_shard_index: body.gguf_shard_index,
             gguf_shard_total: body.gguf_shard_total,
             pipeline_kind: body.pipeline_kind.clone(),
+            cpu_percent,
+            ram_max_mb,
+            contributor_score: existing.contributor_score,
         };
         db.upsert_node(&updated)
             .map_err(|err| AppError::internal(err.to_string()))?;
-        let removed = db
+        let _ = db
             .delete_nodes_by_worker_url_except(&body.worker_url, &existing.id)
             .map_err(|err| AppError::internal(err.to_string()))?;
-        if removed > 0 {
-            info!(
-                removed,
-                worker = %body.worker_url,
-                "removed duplicate registrations for worker_url"
-            );
-        }
         info!(
             node_id = %existing.id,
-            name = %updated.name,
-            worker = %updated.worker_url,
-            "node re-registered (reused id)"
+            compute_units = node_compute_units(cpu_percent, ram_max_mb),
+            "node re-registered"
         );
         return Ok(Json(RegisterNodeResponse {
             node_id: existing.id,
@@ -170,6 +247,9 @@ async fn register_node(
         gguf_shard_index: body.gguf_shard_index,
         gguf_shard_total: body.gguf_shard_total,
         pipeline_kind: body.pipeline_kind,
+        cpu_percent,
+        ram_max_mb,
+        contributor_score: 0.0,
     };
 
     db.upsert_node(&node)
@@ -178,7 +258,11 @@ async fn register_node(
         .delete_nodes_by_worker_url_except(&body.worker_url, &node_id)
         .map_err(|err| AppError::internal(err.to_string()))?;
 
-    info!(node_id = %node_id, name = %node.name, worker = %node.worker_url, "node registered");
+    info!(
+        node_id = %node_id,
+        compute_units = node_compute_units(cpu_percent, ram_max_mb),
+        "node registered"
+    );
     Ok(Json(RegisterNodeResponse { node_id, token }))
 }
 
@@ -191,6 +275,26 @@ async fn heartbeat(
         .get(TOKEN_HEADER)
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| AppError::unauthorized("missing x-youai-token"))?;
+
+    let body_json = serde_json::to_value(&body).unwrap_or_default();
+    {
+        let db = state
+            .db
+            .lock()
+            .map_err(|_| AppError::internal("db lock poisoned"))?;
+        auth::verify_node_hmac(&headers, "POST", "/api/v1/nodes/heartbeat", &body_json, &db)
+            .map_err(|err| AppError::unauthorized(err.to_string()))?;
+    }
+
+    if auth::require_signing() {
+        let nonce = headers
+            .get(signing::HEADER_NONCE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        if !nonce.is_empty() && !state.nonces.check_and_insert(nonce) {
+            return Err(AppError::conflict("replay detected"));
+        }
+    }
 
     let ok = state
         .db
@@ -229,10 +333,35 @@ async fn list_nodes(State(state): State<AppState>) -> Result<Json<NodesResponse>
 
 async fn chat(
     State(state): State<AppState>,
-    Json(body): Json<ChatRequest>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> Result<Json<ChatResponse>, AppError> {
-    if body.prompt.trim().is_empty() {
+    let (chat_body, contributor, priority_label, active_tier) =
+        parse_chat_request(&state, &headers, &body)?;
+
+    if chat_body.prompt.trim().is_empty() {
         return Err(AppError::bad_request("prompt is required"));
+    }
+
+    let mode_str = match chat_body.mode {
+        ChatRoutingMode::Auto => "auto",
+        ChatRoutingMode::Replica => "replica",
+        ChatRoutingMode::Pipeline => "pipeline",
+    };
+    let cache_key = ResponseCache::cache_key(
+        &chat_body.prompt,
+        chat_body.max_tokens,
+        &active_tier,
+        mode_str,
+    );
+
+    if let Ok(mut cache) = state.cache.lock() {
+        if let Some(mut cached) = cache.get(&cache_key) {
+            cached.active_tier = active_tier.clone();
+            cached.priority = priority_label.clone();
+            info!(tier = %active_tier, priority = %priority_label, "cache hit");
+            return Ok(Json(cached));
+        }
     }
 
     let online = {
@@ -258,20 +387,90 @@ async fn chat(
         db.resolve_pipeline(&online, Some(DEFAULT_PIPELINE_GROUP))
     };
 
-    let want_pipeline = matches!(body.mode, ChatRoutingMode::Pipeline)
-        || (body.mode == ChatRoutingMode::Auto && pipeline_chain.is_some());
+    let want_pipeline = matches!(chat_body.mode, ChatRoutingMode::Pipeline)
+        || (chat_body.mode == ChatRoutingMode::Auto && pipeline_chain.is_some());
 
-    if want_pipeline {
+    let response = if want_pipeline {
         let pipeline = pipeline_chain.ok_or_else(|| {
             AppError::service_unavailable(
                 "pipeline mode requested but no complete shard chain is online",
             )
         })?;
+        chat_pipeline(&state, &pipeline, &chat_body.prompt, chat_body.max_tokens, &active_tier, &priority_label)
+            .await?
+    } else {
+        chat_replica(
+            &state,
+            &online,
+            &chat_body.prompt,
+            chat_body.max_tokens,
+            contributor,
+            &active_tier,
+            &priority_label,
+        )
+        .await?
+    };
 
-        return chat_pipeline(&state, &pipeline, &body.prompt, body.max_tokens).await;
+    if let Ok(mut cache) = state.cache.lock() {
+        cache.put(cache_key, response.0.clone(), contributor);
     }
 
-    chat_replica(&state, &online, &body.prompt, body.max_tokens).await
+    Ok(response)
+}
+
+fn parse_chat_request(
+    state: &AppState,
+    headers: &HeaderMap,
+    body: &Bytes,
+) -> Result<(ChatRequest, bool, String, String), AppError> {
+    let (_, _, _, tier_sel) = network_snapshot(state)?;
+
+    if let Ok(envelope) = serde_json::from_slice::<SignedChatRequest>(body) {
+        let verified = {
+            let db = state
+                .db
+                .lock()
+                .map_err(|_| AppError::internal("db lock poisoned"))?;
+            auth::verify_chat_hmac(
+                headers,
+                "/api/v1/chat",
+                &envelope,
+                &state.nonces,
+                &db,
+            )
+            .map_err(|err| AppError::unauthorized(err.to_string()))?
+        };
+        let priority = if verified.contributor {
+            "contributor".to_string()
+        } else {
+            "standard".to_string()
+        };
+        return Ok((envelope.body, verified.contributor, priority, tier_sel.active_tier));
+    }
+
+    if let Ok(plain) = serde_json::from_slice::<ChatRequest>(body) {
+        if auth::require_signing() {
+            let token = headers.get(TOKEN_HEADER).and_then(|v| v.to_str().ok());
+            if let Some(token) = token {
+                let db = state.db.lock().map_err(|_| AppError::internal("db lock"))?;
+                if db.node_id_for_token(token).ok().flatten().is_some() {
+                    let score = db.contributor_score_for_token(token).unwrap_or(0.0);
+                    let priority = if score > 10.0 {
+                        "contributor-high".to_string()
+                    } else {
+                        "contributor".to_string()
+                    };
+                    return Ok((plain, true, priority, tier_sel.active_tier));
+                }
+            }
+            return Err(AppError::unauthorized(
+                "signed chat envelope or contributor token required",
+            ));
+        }
+        return Ok((plain, false, "dev".to_string(), tier_sel.active_tier));
+    }
+
+    Err(AppError::bad_request("invalid chat request body"))
 }
 
 async fn chat_pipeline(
@@ -279,6 +478,8 @@ async fn chat_pipeline(
     pipeline: &[StoredNode],
     prompt: &str,
     max_tokens: u32,
+    active_tier: &str,
+    priority: &str,
 ) -> Result<Json<ChatResponse>, AppError> {
     let (text, stages, model, mode) = run_pipeline(
         &state.http,
@@ -295,7 +496,8 @@ async fn chat_pipeline(
         node_id = %last.id,
         stages = pipeline.len(),
         %mode,
-        "routed pipeline chat request"
+        tier = %active_tier,
+        "routed pipeline chat"
     );
 
     Ok(Json(ChatResponse {
@@ -305,6 +507,9 @@ async fn chat_pipeline(
         text,
         mode: mode.to_string(),
         stages,
+        cached: false,
+        active_tier: active_tier.to_string(),
+        priority: priority.to_string(),
     }))
 }
 
@@ -313,27 +518,35 @@ async fn chat_replica(
     nodes: &[StoredNode],
     prompt: &str,
     max_tokens: u32,
+    contributor: bool,
+    active_tier: &str,
+    priority: &str,
 ) -> Result<Json<ChatResponse>, AppError> {
+    let mut ordered: Vec<&StoredNode> = nodes.iter().collect();
+    if contributor {
+        ordered.sort_by(|a, b| {
+            b.contributor_score
+                .partial_cmp(&a.contributor_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+
     let start = state.rr.fetch_add(1, Ordering::Relaxed);
     let mut last_err: Option<String> = None;
 
-    for attempt in 0..nodes.len() {
-        let idx = (start + attempt) % nodes.len();
-        let node = &nodes[idx];
+    for attempt in 0..ordered.len() {
+        let idx = (start + attempt) % ordered.len();
+        let node = ordered[idx];
 
         if !worker_is_healthy(&state.health_http, &node.worker_url).await {
-            warn!(
-                node_id = %node.id,
-                worker = %node.worker_url,
-                "skipping unhealthy worker"
-            );
+            warn!(node_id = %node.id, worker = %node.worker_url, "skipping unhealthy worker");
             last_err = Some(format!("worker {} unreachable", node.worker_url));
             continue;
         }
 
         match run_infer(&state.http, node, prompt, max_tokens).await {
             Ok(infer) => {
-                info!(node_id = %node.id, node_name = %node.name, "routed replica chat request");
+                info!(node_id = %node.id, tier = %active_tier, "routed replica chat");
                 return Ok(Json(ChatResponse {
                     node_id: node.id.clone(),
                     node_name: node.name.clone(),
@@ -341,10 +554,13 @@ async fn chat_replica(
                     text: infer.text,
                     mode: "replica".to_string(),
                     stages: vec![],
+                    cached: false,
+                    active_tier: active_tier.to_string(),
+                    priority: priority.to_string(),
                 }));
             }
             Err(err) => {
-                warn!(node_id = %node.id, error = %err, "worker inference failed, trying next");
+                warn!(node_id = %node.id, error = %err, "worker inference failed");
                 last_err = Some(err);
             }
         }
@@ -403,6 +619,13 @@ impl AppError {
     fn unauthorized(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
+            message: message.into(),
+        }
+    }
+
+    fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
             message: message.into(),
         }
     }

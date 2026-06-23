@@ -21,6 +21,9 @@ pub struct StoredNode {
     pub gguf_shard_index: u16,
     pub gguf_shard_total: u16,
     pub pipeline_kind: String,
+    pub cpu_percent: u8,
+    pub ram_max_mb: u32,
+    pub contributor_score: f64,
 }
 
 pub struct Database {
@@ -30,7 +33,7 @@ pub struct Database {
 const NODE_SELECT: &str =
     "SELECT id, token, name, region, worker_url, model, last_heartbeat, created_at,
     shard_group, shard_stage, shard_total_stages, rpc_url, gguf_shard_index, gguf_shard_total,
-    pipeline_kind FROM nodes";
+    pipeline_kind, cpu_percent, ram_max_mb, contributor_score FROM nodes";
 
 impl Database {
     pub fn open(path: &Path) -> Result<Self> {
@@ -90,7 +93,76 @@ impl Database {
             "ALTER TABLE nodes ADD COLUMN pipeline_kind TEXT NOT NULL DEFAULT ''",
             [],
         );
+        let _ = self.conn.execute(
+            "ALTER TABLE nodes ADD COLUMN cpu_percent INTEGER NOT NULL DEFAULT 30",
+            [],
+        );
+        let _ = self.conn.execute(
+            "ALTER TABLE nodes ADD COLUMN ram_max_mb INTEGER NOT NULL DEFAULT 2048",
+            [],
+        );
+        let _ = self.conn.execute(
+            "ALTER TABLE nodes ADD COLUMN contributor_score REAL NOT NULL DEFAULT 0",
+            [],
+        );
+        self.conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS seen_nonces (
+                nonce TEXT PRIMARY KEY,
+                seen_at INTEGER NOT NULL
+            );
+            "#,
+        )?;
         Ok(())
+    }
+
+    pub fn node_token(&self, node_id: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT token FROM nodes WHERE id = ?1 LIMIT 1")?;
+        let mut rows = stmt.query(params![node_id])?;
+        if let Some(row) = rows.next()? {
+            return Ok(Some(row.get(0)?));
+        }
+        Ok(None)
+    }
+
+    pub fn node_id_for_token(&self, token: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM nodes WHERE token = ?1 LIMIT 1")?;
+        let mut rows = stmt.query(params![token])?;
+        if let Some(row) = rows.next()? {
+            return Ok(Some(row.get(0)?));
+        }
+        Ok(None)
+    }
+
+    pub fn contributor_score_for_token(&self, token: &str) -> Result<f64> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT contributor_score FROM nodes WHERE token = ?1 LIMIT 1")?;
+        let mut rows = stmt.query(params![token])?;
+        if let Some(row) = rows.next()? {
+            return Ok(row.get(0)?);
+        }
+        Ok(0.0)
+    }
+
+    pub fn network_compute_units(&self, online: &[StoredNode]) -> u64 {
+        use youai_common::compute::node_compute_units;
+        online
+            .iter()
+            .map(|n| node_compute_units(n.cpu_percent, n.ram_max_mb))
+            .sum()
+    }
+
+    pub fn count_pipeline_chains(&self, online: &[StoredNode]) -> u32 {
+        if self.resolve_pipeline(online, None).is_some() {
+            1
+        } else {
+            0
+        }
     }
 
     pub fn upsert_node(&self, node: &StoredNode) -> Result<()> {
@@ -99,9 +171,9 @@ impl Database {
             INSERT INTO nodes (
                 id, token, name, region, worker_url, model, last_heartbeat, created_at,
                 shard_group, shard_stage, shard_total_stages, rpc_url, gguf_shard_index, gguf_shard_total,
-                pipeline_kind
+                pipeline_kind, cpu_percent, ram_max_mb, contributor_score
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
             ON CONFLICT(id) DO UPDATE SET
                 token = excluded.token,
                 name = excluded.name,
@@ -115,7 +187,10 @@ impl Database {
                 rpc_url = excluded.rpc_url,
                 gguf_shard_index = excluded.gguf_shard_index,
                 gguf_shard_total = excluded.gguf_shard_total,
-                pipeline_kind = excluded.pipeline_kind
+                pipeline_kind = excluded.pipeline_kind,
+                cpu_percent = excluded.cpu_percent,
+                ram_max_mb = excluded.ram_max_mb,
+                contributor_score = excluded.contributor_score
             "#,
             params![
                 node.id,
@@ -133,6 +208,9 @@ impl Database {
                 node.gguf_shard_index,
                 node.gguf_shard_total,
                 node.pipeline_kind,
+                node.cpu_percent,
+                node.ram_max_mb,
+                node.contributor_score,
             ],
         )?;
         Ok(())
@@ -141,7 +219,9 @@ impl Database {
     pub fn heartbeat(&self, node_id: &str, token: &str) -> Result<bool> {
         let now = Utc::now().timestamp();
         let updated = self.conn.execute(
-            "UPDATE nodes SET last_heartbeat = ?1 WHERE id = ?2 AND token = ?3",
+            "UPDATE nodes SET last_heartbeat = ?1,
+             contributor_score = contributor_score + 1.0
+             WHERE id = ?2 AND token = ?3",
             params![now, node_id, token],
         )?;
         Ok(updated == 1)
@@ -316,6 +396,9 @@ fn map_stored_node(row: &Row<'_>) -> rusqlite::Result<StoredNode> {
         gguf_shard_index: row.get(12)?,
         gguf_shard_total: row.get(13)?,
         pipeline_kind: row.get(14)?,
+        cpu_percent: row.get(15)?,
+        ram_max_mb: row.get(16)?,
+        contributor_score: row.get(17)?,
     })
 }
 
@@ -336,6 +419,13 @@ fn map_node_info(row: &Row<'_>) -> rusqlite::Result<NodeInfo> {
         gguf_shard_index: row.get(12)?,
         gguf_shard_total: row.get(13)?,
         pipeline_kind: row.get(14)?,
+        cpu_percent: row.get(15)?,
+        ram_max_mb: row.get(16)?,
+        compute_units: youai_common::compute::node_compute_units(
+            row.get::<_, u8>(15)?,
+            row.get::<_, u32>(16)?,
+        ),
+        contributor_score: row.get(17)?,
     })
 }
 

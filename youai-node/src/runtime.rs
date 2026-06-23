@@ -6,9 +6,9 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tracing::{error, info, warn};
 use youai_common::{
-    clear_runtime_state, is_process_alive, load_runtime_state, save_config, save_runtime_state,
-    worker_health_url, worker_url, HeartbeatRequest, NodeConfig, RegisterNodeRequest,
-    RegisterNodeResponse, RuntimeState, HEARTBEAT_INTERVAL_SECS,
+    clear_runtime_state, compute::parse_ram_max_mb, is_process_alive, load_runtime_state,
+    save_config, save_runtime_state, signing, worker_health_url, worker_url, HeartbeatRequest,
+    NodeConfig, RegisterNodeRequest, RegisterNodeResponse, RuntimeState, HEARTBEAT_INTERVAL_SECS,
 };
 
 pub struct NodeRuntime {
@@ -154,20 +154,26 @@ impl NodeRuntime {
             .as_ref()
             .context("missing token in config")?;
 
+        let path = "/api/v1/nodes/heartbeat";
         let url = format!(
-            "{}/api/v1/nodes/heartbeat",
-            self.coordinator_url.trim_end_matches('/')
+            "{}{}",
+            self.coordinator_url.trim_end_matches('/'),
+            path
         );
-        let response = self
-            .http
-            .post(&url)
-            .header("x-youai-token", token)
-            .json(&HeartbeatRequest {
-                node_id: node_id.clone(),
-            })
-            .send()
-            .await
-            .with_context(|| format!("POST {url}"))?;
+        let issued_at = signing::unix_now();
+        let nonce = signing::fresh_nonce();
+        let body = HeartbeatRequest {
+            node_id: node_id.clone(),
+            issued_at,
+            nonce: nonce.clone(),
+        };
+        let body_json = serde_json::to_value(&body).context("serialize heartbeat")?;
+        let signed = signing::signed_headers(token, "POST", path, &body_json);
+        let mut req = self.http.post(&url).header("x-youai-token", token);
+        for (name, value) in signed {
+            req = req.header(name, value);
+        }
+        let response = req.json(&body).send().await.with_context(|| format!("POST {url}"))?;
 
         if response.status().is_success() {
             info!(node_id = %node_id, "heartbeat ok");
@@ -322,6 +328,7 @@ async fn register_or_reuse(
         coordinator_url.trim_end_matches('/')
     );
 
+    let ram_max_mb = parse_ram_max_mb(&config.resources.ram_max).unwrap_or(2048);
     let response = http
         .post(&url)
         .json(&RegisterNodeRequest {
@@ -336,6 +343,8 @@ async fn register_or_reuse(
             gguf_shard_index: config.shard.gguf_shard_index,
             gguf_shard_total: config.shard.gguf_shard_total,
             pipeline_kind: config.shard.pipeline_kind.clone(),
+            cpu_percent: config.resources.cpu_percent,
+            ram_max_mb,
         })
         .send()
         .await

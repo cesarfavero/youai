@@ -30,6 +30,7 @@
       "network_requirements": {
         "min_contributors_online": 1,
         "min_total_ram_gb": 1,
+        "min_compute_units": 500,
         "min_pipeline_chains": 0
       },
       "features": ["chat", "dev"]
@@ -74,8 +75,9 @@
         }
       ],
       "network_requirements": {
-        "min_contributors_online": 2,
+        "min_contributors_online": 0,
         "min_total_ram_gb": 4,
+        "min_compute_units": 1000,
         "min_pipeline_chains": 1
       },
       "features": ["chat", "pipeline_v4"]
@@ -105,8 +107,9 @@
         }
       ],
       "network_requirements": {
-        "min_contributors_online": 10,
+        "min_contributors_online": 0,
         "min_total_ram_gb": 20,
+        "min_compute_units": 6000,
         "min_pipeline_chains": 2
       },
       "features": ["chat", "pipeline_v4", "long_context"],
@@ -135,8 +138,9 @@
         }
       ],
       "network_requirements": {
-        "min_contributors_online": 100,
+        "min_contributors_online": 0,
         "min_total_ram_gb": 200,
+        "min_compute_units": 60000,
         "min_pipeline_chains": 4
       },
       "features": ["chat", "pipeline_v4", "tools_gateway"],
@@ -166,8 +170,9 @@
         }
       ],
       "network_requirements": {
-        "min_contributors_online": 1000,
+        "min_contributors_online": 0,
         "min_total_ram_gb": 2000,
+        "min_compute_units": 600000,
         "min_pipeline_chains": 8
       },
       "features": ["chat", "pipeline_v4", "upload_gateway"],
@@ -199,8 +204,9 @@
         }
       ],
       "network_requirements": {
-        "min_contributors_online": 10000,
+        "min_contributors_online": 0,
         "min_total_ram_gb": 20000,
+        "min_compute_units": 6000000,
         "min_pipeline_chains": 16
       },
       "features": ["chat", "pipeline_v4", "upload_gateway", "url_gateway", "search_gateway"],

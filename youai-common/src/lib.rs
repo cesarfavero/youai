@@ -1,5 +1,8 @@
 //! Shared types, defaults, and config paths for the YouAI workspace.
 
+pub mod compute;
+pub mod signing;
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -411,6 +414,16 @@ pub struct RegisterNodeRequest {
     pub gguf_shard_total: u16,
     #[serde(default)]
     pub pipeline_kind: String,
+    /// CPU cap offered to the network (for compute-unit tiering).
+    #[serde(default = "default_cpu_percent")]
+    pub cpu_percent: u8,
+    /// RAM cap in megabytes (parsed from config `ram_max`).
+    #[serde(default = "default_ram_max_mb")]
+    pub ram_max_mb: u32,
+}
+
+fn default_ram_max_mb() -> u32 {
+    2048
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -422,6 +435,10 @@ pub struct RegisterNodeResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeartbeatRequest {
     pub node_id: String,
+    #[serde(default)]
+    pub issued_at: i64,
+    #[serde(default)]
+    pub nonce: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -448,6 +465,14 @@ pub struct NodeInfo {
     pub gguf_shard_total: u16,
     #[serde(default)]
     pub pipeline_kind: String,
+    #[serde(default = "default_cpu_percent")]
+    pub cpu_percent: u8,
+    #[serde(default = "default_ram_max_mb")]
+    pub ram_max_mb: u32,
+    #[serde(default)]
+    pub compute_units: u64,
+    #[serde(default)]
+    pub contributor_score: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -468,6 +493,38 @@ pub struct ChatRequest {
     /// auto: pipeline when a full shard chain is online, else replica.
     #[serde(default)]
     pub mode: ChatRoutingMode,
+}
+
+/// Signed chat envelope (integrity + anti-replay).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedChatRequest {
+    pub v: u8,
+    pub id: String,
+    pub issued_at: i64,
+    pub expires_at: i64,
+    pub nonce: String,
+    pub body: ChatRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryTierResponse {
+    pub active_tier: String,
+    pub display_name: String,
+    pub model_id: String,
+    pub network_compute_units: u64,
+    pub min_compute_units: u64,
+    pub next_tier: Option<String>,
+    pub next_tier_compute_needed: Option<u64>,
+    pub pipeline_chains: u32,
+    pub selection_basis: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkComputeResponse {
+    pub total_compute_units: u64,
+    pub online_nodes: u32,
+    pub pipeline_chains: u32,
+    pub active_tier: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -493,6 +550,12 @@ pub struct ChatResponse {
     pub mode: String,
     #[serde(default)]
     pub stages: Vec<ChatStageInfo>,
+    #[serde(default)]
+    pub cached: bool,
+    #[serde(default)]
+    pub active_tier: String,
+    #[serde(default)]
+    pub priority: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,8 +1,11 @@
 //! YouAI Coordinator — node registry, heartbeat, and round-robin chat routing.
 
 mod api;
+mod auth;
+mod cache;
 mod db;
 mod pipeline;
+mod registry;
 
 use anyhow::Result;
 use clap::Parser;
