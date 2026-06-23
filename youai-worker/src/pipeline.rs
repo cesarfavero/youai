@@ -141,7 +141,7 @@ fn run_pipeline_step_subprocess(
 
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::null());
 
     info!(
         op = %req.op,
@@ -152,8 +152,8 @@ fn run_pipeline_step_subprocess(
 
     let output = run_with_timeout(cmd, config.timeout)?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("pipeline-step failed: {stderr}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        bail!("pipeline-step exited with {}: {stdout}", output.status);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);

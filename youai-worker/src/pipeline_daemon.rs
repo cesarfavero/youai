@@ -220,33 +220,41 @@ pub fn try_run_via_daemon(
         return Ok(None);
     }
 
-    if daemon.is_none() {
-        match PipelineDaemon::spawn(config) {
-            Ok(d) => *daemon = Some(d),
+    for attempt in 0..2 {
+        if daemon.is_none() {
+            match PipelineDaemon::spawn(config) {
+                Ok(d) => *daemon = Some(d),
+                Err(err) => {
+                    warn!(error = %err, "pipeline daemon unavailable, using subprocess");
+                    return Ok(None);
+                }
+            }
+        }
+
+        let Some(d) = daemon.as_mut() else {
+            return Ok(None);
+        };
+
+        match d.run_step(
+            config,
+            req,
+            session_dir,
+            activation_out,
+            activation_in,
+            config.timeout,
+        ) {
+            Ok(out) => return Ok(Some(out)),
             Err(err) => {
+                warn!(error = %err, attempt, "pipeline daemon step failed");
+                *daemon = None;
+                if attempt == 0 {
+                    continue;
+                }
                 warn!(error = %err, "pipeline daemon unavailable, using subprocess");
                 return Ok(None);
             }
         }
     }
 
-    let Some(d) = daemon.as_mut() else {
-        return Ok(None);
-    };
-
-    match d.run_step(
-        config,
-        req,
-        session_dir,
-        activation_out,
-        activation_in,
-        config.timeout,
-    ) {
-        Ok(out) => Ok(Some(out)),
-        Err(err) => {
-            warn!(error = %err, "pipeline daemon step failed, falling back to subprocess");
-            *daemon = None;
-            Ok(None)
-        }
-    }
+    Ok(None)
 }

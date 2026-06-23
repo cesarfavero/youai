@@ -113,11 +113,33 @@ struct session_ctx {
 
 static void print_json_escaped(const std::string & text) {
     putchar('"');
-    for (char c : text) {
-        if (c == '"' || c == '\\') {
-            putchar('\\');
+    for (unsigned char c : text) {
+        switch (c) {
+        case '"':
+            fputs("\\\"", stdout);
+            break;
+        case '\\':
+            fputs("\\\\", stdout);
+            break;
+        case '\n':
+            fputs("\\n", stdout);
+            break;
+        case '\r':
+            fputs("\\r", stdout);
+            break;
+        case '\t':
+            fputs("\\t", stdout);
+            break;
+        default:
+            if (c < 0x20) {
+                char buf[8];
+                snprintf(buf, sizeof(buf), "\\u%04x", c);
+                fputs(buf, stdout);
+            } else {
+                putchar(static_cast<char>(c));
+            }
+            break;
         }
-        putchar(c);
     }
     putchar('"');
 }

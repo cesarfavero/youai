@@ -1,7 +1,7 @@
 //! Instruct chat templates and response cleanup (SmolLM2 / Qwen2.5).
 
 /// Bump when template text changes (invalidates response cache keys).
-pub const CHAT_TEMPLATE_VERSION: u32 = 2;
+pub const CHAT_TEMPLATE_VERSION: u32 = 4;
 
 pub const SMOLLM2_SYSTEM: &str =
     "You are a helpful AI assistant named SmolLM, trained by Hugging Face.";
@@ -35,12 +35,10 @@ pub fn is_eos_piece(piece: &str) -> bool {
     piece.contains("<|im_end|>") || piece.contains("<|endoftext|>")
 }
 
-/// True when a decoded token piece is empty or only whitespace/punctuation (degeneration).
-pub fn is_degenerate_piece(piece: &str) -> bool {
+/// Skip appending this token piece but continue generation (leading whitespace, dot spam).
+pub fn should_skip_piece(piece: &str) -> bool {
     let trimmed = piece.trim();
-    trimmed.is_empty()
-        || trimmed.chars().all(|c| c == '.' || c.is_whitespace())
-        || (trimmed.len() <= 2 && trimmed.chars().all(|c| !c.is_alphanumeric()))
+    trimmed.is_empty() || (trimmed.chars().all(|c| c == '.') && trimmed.len() >= 4)
 }
 
 /// Strip special tokens and degeneration tails from model output.
@@ -85,6 +83,20 @@ pub fn clean_assistant_response(raw: &str) -> String {
 
     let mut cleaned = out.split_whitespace().collect::<Vec<_>>().join(" ").trim().to_string();
     cleaned = trim_degenerate_edges(&cleaned);
+    if cleaned.is_empty() {
+        let fallback = text
+            .replace("<|im_end|>", "")
+            .replace("<|endoftext|>", "")
+            .replace("<|im_start|>", "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string();
+        if !fallback.is_empty() {
+            return fallback;
+        }
+    }
     cleaned
 }
 
@@ -130,9 +142,16 @@ mod tests {
     }
 
     #[test]
-    fn detects_degenerate_piece() {
-        assert!(is_degenerate_piece("..."));
-        assert!(is_degenerate_piece(" "));
-        assert!(!is_degenerate_piece("Hi"));
+    fn keeps_punctuation_only_when_trimming_would_empty() {
+        assert_eq!(clean_assistant_response("......"), "......");
+    }
+
+    #[test]
+    fn skip_piece_only_for_whitespace_or_dot_spam() {
+        assert!(should_skip_piece("    "));
+        assert!(should_skip_piece("...."));
+        assert!(!should_skip_piece("..."));
+        assert!(!should_skip_piece("Hi"));
+        assert!(should_skip_piece("\n"));
     }
 }
