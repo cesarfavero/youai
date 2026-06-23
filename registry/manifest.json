@@ -83,8 +83,27 @@
     "tier2": {
       "id": "tier2",
       "display_name": "YouAI Glow",
-      "description": "Modelo maior — requer mais contribuintes e RAM",
-      "models": [],
+      "description": "Qwen2.5-1.5B — contexto longo, multilingue",
+      "models": [
+        {
+          "id": "qwen2.5-1.5b-instruct-q4_k_m",
+          "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+          "url": "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+          "sha256": null,
+          "size_bytes": null,
+          "alternate_id": "smollm2-1.7b-instruct-q4_k_m",
+          "alternate_url": "https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF/resolve/main/SmolLM2-1.7B-Instruct-Q4_K_M.gguf",
+          "pipeline": { "kind": "activation", "stages": 4 },
+          "runtime": {
+            "ram_min_mb": 1536,
+            "ram_recommended_mb": 2048,
+            "cpu_percent_default": 30,
+            "gpu_required": false
+          },
+          "selection_rationale": "MMLU-Pro/BBH/MT-Bench superiores a SmolLM2-1.7B; 128K context; Apache 2.0",
+          "status": "planned"
+        }
+      ],
       "network_requirements": {
         "min_contributors_online": 10,
         "min_total_ram_gb": 20,
@@ -96,8 +115,25 @@
     "tier3": {
       "id": "tier3",
       "display_name": "YouAI Beam",
-      "description": "Classe 3B — tools via gateway",
-      "models": [],
+      "description": "Qwen2.5-3B — raciocínio + tools gateway",
+      "models": [
+        {
+          "id": "qwen2.5-3b-instruct-q4_k_m",
+          "filename": "qwen2.5-3b-instruct-q4_k_m.gguf",
+          "url": "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+          "sha256": null,
+          "size_bytes": null,
+          "pipeline": { "kind": "activation", "stages": 4 },
+          "runtime": {
+            "ram_min_mb": 3072,
+            "ram_recommended_mb": 4096,
+            "cpu_percent_default": 30,
+            "gpu_required": false
+          },
+          "selection_rationale": "Topo da classe 3B open; Apache 2.0",
+          "status": "planned"
+        }
+      ],
       "network_requirements": {
         "min_contributors_online": 100,
         "min_total_ram_gb": 200,
@@ -109,8 +145,26 @@
     "tier4": {
       "id": "tier4",
       "display_name": "YouAI Arc",
-      "description": "7B sharded — upload leitura no gateway",
-      "models": [],
+      "description": "Qwen2.5-7B sharded — upload leitura no gateway",
+      "models": [
+        {
+          "id": "qwen2.5-7b-instruct-q4_k_m",
+          "filename": "qwen2.5-7b-instruct-q4_k_m.gguf",
+          "url": "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "sha256": null,
+          "size_bytes": null,
+          "alternate_id": "llama-3.1-8b-instruct-q4_k_m",
+          "pipeline": { "kind": "activation", "stages": 8 },
+          "runtime": {
+            "ram_min_mb": 2048,
+            "ram_recommended_mb": 4096,
+            "cpu_percent_default": 30,
+            "gpu_required": false
+          },
+          "selection_rationale": "Referência open 7B; pipeline 4-8 stages",
+          "status": "planned"
+        }
+      ],
       "network_requirements": {
         "min_contributors_online": 1000,
         "min_total_ram_gb": 2000,
@@ -122,8 +176,28 @@
     "tier5": {
       "id": "tier5",
       "display_name": "YouAI Horizon",
-      "description": "7B+ / MoE parcial — URL e busca no gateway",
-      "models": [],
+      "description": "Qwen2.5-14B+ — URL e busca no gateway",
+      "models": [
+        {
+          "id": "qwen2.5-14b-instruct-q4_k_m",
+          "filename": "qwen2.5-14b-instruct-q4_k_m.gguf",
+          "url": "https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+          "sha256": null,
+          "size_bytes": null,
+          "stretch_id": "qwen2.5-32b-instruct-q4_k_m",
+          "stretch_url": "https://huggingface.co/bartowski/Qwen2.5-32B-Instruct-GGUF/resolve/main/Qwen2.5-32B-Instruct-Q4_K_M.gguf",
+          "alternate_id": "mixtral-8x7b-instruct-q4_k_m",
+          "pipeline": { "kind": "activation", "stages": 16 },
+          "runtime": {
+            "ram_min_mb": 2048,
+            "ram_recommended_mb": 4096,
+            "cpu_percent_default": 30,
+            "gpu_required": false
+          },
+          "selection_rationale": "Realista com 10k contribuintes; 32B stretch se RAM agregada permitir",
+          "status": "planned"
+        }
+      ],
       "network_requirements": {
         "min_contributors_online": 10000,
         "min_total_ram_gb": 20000,

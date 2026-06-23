@@ -94,11 +94,11 @@ A rede **não** tenta rodar um modelo frontier com 2 PCs. O **Model Registry** d
 | Tier | Nome | Modelo (referência) | RAM/nó | Rede mínima | Estado |
 |------|------|---------------------|--------|-------------|--------|
 | tier0 | Lab | SmolLM2-360M | 512 MB | 1 nó | dev |
-| **tier1** | **Spark** | **SmolLM2-360M Q4_K_M** | **~1 GB** | **2 contribuintes** | **✅ hoje** |
-| tier2 | Glow | SmolLM2-1.7B / Qwen2.5-0.5B | 2 GB | 10 | planeado |
-| tier3 | Beam | 3B class | 4 GB | 100 | planeado |
-| tier4 | Arc | 7B sharded | 4 GB/stage | 1 000 | planeado |
-| tier5 | Horizon | 7B+ / MoE | variável | 10 000 | planeado |
+| **tier1** | **Spark** | **SmolLM2-360M-Instruct** Q4_K_M | **~1 GB** | **2 contribuintes** | **✅ hoje** |
+| tier2 | Glow | **Qwen2.5-1.5B-Instruct** Q4_K_M | 2 GB | 10 | planeado |
+| tier3 | Beam | **Qwen2.5-3B-Instruct** Q4_K_M | 4 GB | 100 | planeado |
+| tier4 | Arc | **Qwen2.5-7B-Instruct** Q4_K_M (sharded) | 4 GB/stage | 1 000 | planeado |
+| tier5 | Horizon | **Qwen2.5-14B-Instruct** Q4_K_M | variável | 10 000 | planeado |
 
 **Tier 1 (Spark)** é o alvo para o teu Mac Mini: ~220 MB em disco, ~0.5–1.5 GB RAM em inferência, **30% CPU** por defeito, sem GPU obrigatória.
 
@@ -129,7 +129,7 @@ youai-node models update    # sync com registry
 youai-node tier             # tier activo + o que falta para subir
 ```
 
-Documento completo: [docs/MODEL_TIERS.md](docs/MODEL_TIERS.md)
+Catálogo completo com benchmarks e alternativas: [docs/MODEL_TIERS.md](docs/MODEL_TIERS.md) §3.5
 
 ### Escala com a rede
 
@@ -170,6 +170,8 @@ Contribuintes **não** vêem prompts de outros (E2E). Benefício = modelo melhor
 | 8 | **Transparência total** — comportamento documentado, código aberto |
 | 9 | **PRs revistos** — merge humano obrigatório em código sensível |
 | 10 | **Não atrapalhar o dia a dia** — background com pausa automática |
+| 11 | **Rede fechada** — só contribuintes/app autenticado; sem API pública anónima |
+| 12 | **Requests imutáveis** — Ed25519/HMAC + timestamp + nonce; sem replay |
 
 ### O que o PC do contribuinte **nunca** faz
 
@@ -192,7 +194,9 @@ Contribuintes **não** vêem prompts de outros (E2E). Benefício = modelo melhor
 
 Upload, análise de URL e busca **não** correm nos nós voluntários — só no **gateway YouAI** (sandbox), a partir de tier4–5.
 
-Documentos: [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) (design completo) · [docs/SECURITY.md](docs/SECURITY.md) (disclosure)
+Documentos: [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) (design completo — E2E, sem blockchain, assinatura §6.6) · [docs/SECURITY.md](docs/SECURITY.md) (disclosure)
+
+**Blockchain:** não usamos no caminho crítico — E2E + assinatura Ed25519/HMAC resolve integridade e privacidade com latência aceitável.
 
 ### Estado honesto da segurança
 

@@ -1,6 +1,6 @@
 # YouAI — Model Tiers & Registry
 
-> **Status:** design v1.0 · documento normativo  
+> **Status:** design v1.1 · documento normativo  
 > **Última atualização:** junho 2026  
 > **Relacionado:** [PRODUCT.md](./PRODUCT.md) · [SECURITY_MODEL.md](./SECURITY_MODEL.md) · [PIPELINE.md](./PIPELINE.md)
 
@@ -125,11 +125,11 @@ Avalia métricas da rede (N nós, RAM, chains)
 | Tier | Nome | Modelo (referência) | RAM/nó (alvo) | Rede mínima | Features |
 |------|------|---------------------|---------------|-------------|----------|
 | **tier0** | Lab | SmolLM2-360M (dev) | 512 MB | 1 nó | dev only |
-| **tier1** | Spark | SmolLM2-360M Q4_K_M | 1 GB | 2 contribuintes | chat, pipeline v4 |
-| **tier2** | Glow | SmolLM2-1.7B Q4 ou Qwen2.5-0.5B | 2 GB | 10 contribuintes | + contexto longo |
-| **tier3** | Beam | 3B class Q4 | 4 GB | 100 contribuintes | + tools gateway |
-| **tier4** | Arc | 7B sharded pipeline | 4 GB/stage | 1 000 contribuintes | + upload leitura* |
-| **tier5** | Horizon | 7B+ / MoE parcial | variável | 10 000 contribuintes | + URL, busca* |
+| **tier1** | Spark | **SmolLM2-360M-Instruct** Q4_K_M | 1 GB | 2 contribuintes | chat, pipeline v4 |
+| **tier2** | Glow | **Qwen2.5-1.5B-Instruct** Q4_K_M | 2 GB | 10 contribuintes | + contexto longo |
+| **tier3** | Beam | **Qwen2.5-3B-Instruct** Q4_K_M | 4 GB | 100 contribuintes | + tools gateway |
+| **tier4** | Arc | **Qwen2.5-7B-Instruct** Q4_K_M (sharded) | 4 GB/stage | 1 000 contribuintes | + upload leitura* |
+| **tier5** | Horizon | **Qwen2.5-14B-Instruct** Q4_K_M (ou 32B) | variável | 10 000 contribuintes | + URL, busca* |
 
 \* Upload, análise de URL e busca **não** correm nos nós voluntários — correm no **gateway** com sandbox (ver [PRODUCT.md](./PRODUCT.md)).
 
@@ -184,6 +184,135 @@ tier_ativo = max { tierN | rede_satisfaz(tierN.network_requirements) }
 | 10 000 | 2 000+ | tier5 | 7B+ rede estável, features T3 |
 
 Com 10k na rede e 2k contribuintes saudáveis, um modelo “legal” (tier4–5) **roda de boa** porque há RAM agregada e pipeline chains de sobra — exactamente como descreveste.
+
+### 3.5 Catálogo de modelos (escolha por tier)
+
+Critérios usados na pesquisa (junho 2026):
+
+1. **Qualidade por parâmetro** — benchmarks públicos (MMLU-Pro, IFEval, MT-Bench, BBH, GSM8K)
+2. **GGUF maduro** — quantizações `Q4_K_M` via [bartowski](https://huggingface.co/bartowski) para llama.cpp
+3. **Licença** — preferência Apache 2.0 (sem restrições enterprise)
+4. **RAM real** — cabe no perfil do tier com guard activo
+5. **Pipeline** — layer-split testável com `scripts/split-model-layers.py`
+6. **Multilingue** — PT/EN útil para a rede brasileira/global
+
+**Quantização padrão em todos os tiers:** `Q4_K_M` (melhor compromisso qualidade/tamanho em CPU).
+
+---
+
+#### Tier 0 — Lab (dev local)
+
+| Campo | Valor |
+|-------|-------|
+| **Primário** | `SmolLM2-360M-Instruct` Q4_K_M |
+| **Parâmetros** | 360M |
+| **Disco** | ~220 MB |
+| **RAM** | ~512 MB–1 GB |
+| **Porquê** | Mesmo modelo tier1; 1 nó, zero dependência de rede |
+| **HF GGUF** | `bartowski/SmolLM2-360M-Instruct-GGUF` |
+| **Licença** | Apache 2.0 |
+
+---
+
+#### Tier 1 — Spark (Mac Mini hoje) ✅
+
+| Campo | Valor |
+|-------|-------|
+| **Primário** | `SmolLM2-360M-Instruct` Q4_K_M |
+| **Parâmetros** | 360M |
+| **Disco** | ~258 MB |
+| **RAM inferência** | ~0.5–1.5 GB (`ram_max=2g`) |
+| **Porquê** | Desenhado para on-device (HF SmolLM2 paper); mais capaz que modelos 2× maiores em tarefas edge; já validado no dogfood |
+| **Alternativa descartada** | Qwen2.5-0.5B — melhor MMLU mas ~40% mais pesado; pior para background no Mac Mini |
+| **HF GGUF** | `bartowski/SmolLM2-360M-Instruct-GGUF` |
+| **Pipeline** | activation v4, 2 stages |
+| **Licença** | Apache 2.0 |
+
+---
+
+#### Tier 2 — Glow (~10 contribuintes, 2 GB RAM/nó)
+
+| Campo | Valor |
+|-------|-------|
+| **Primário** | `Qwen2.5-1.5B-Instruct` Q4_K_M |
+| **Parâmetros** | 1.5B |
+| **Disco** | ~1.0 GB |
+| **RAM** | ~2 GB |
+| **Porquê** | Melhor raciocínio que SmolLM2-1.7B em MMLU-Pro (24.2 vs 19.3), BBH (35.3 vs 32.2), MT-Bench (6.52 vs 6.13); contexto 128K; forte multilingue (PT) |
+| **Alternativa** | `SmolLM2-1.7B-Instruct` Q4_K_M — melhor IFEval (56.7) e GSM8K (48.2); mesma família que tier1 (migração mais simples) |
+| **HF GGUF** | `bartowski/Qwen2.5-1.5B-Instruct-GGUF` |
+| **Pipeline** | activation v4, 2–4 stages |
+| **Licença** | Apache 2.0 |
+
+---
+
+#### Tier 3 — Beam (~100 contribuintes, 4 GB RAM/nó)
+
+| Campo | Valor |
+|-------|-------|
+| **Primário** | `Qwen2.5-3B-Instruct` Q4_K_M |
+| **Parâmetros** | 3B |
+| **Disco** | ~2.0 GB |
+| **RAM** | ~4 GB |
+| **Porquê** | Topo da classe 3B open; salto claro de qualidade vs 1.5B; prepara tools no gateway (tier3+) |
+| **Alternativa** | `Llama-3.2-3B-Instruct` Q4_K_M — competitivo mas licença Meta mais restritiva |
+| **HF GGUF** | `bartowski/Qwen2.5-3B-Instruct-GGUF` |
+| **Pipeline** | activation v4, 4 stages |
+| **Licença** | Apache 2.0 |
+
+---
+
+#### Tier 4 — Arc (~1 000 contribuintes, pipeline 7B)
+
+| Campo | Valor |
+|-------|-------|
+| **Primário** | `Qwen2.5-7B-Instruct` Q4_K_M |
+| **Parâmetros** | 7B |
+| **Disco** | ~4.5 GB (modelo completo) |
+| **RAM/stage** | ~2–4 GB (4–8 stages) |
+| **Porquê** | Referência open 7B; GGUF maduro; excelente custo/benefício em pipeline; comunidade local LLM enorme |
+| **Alternativa** | `Llama-3.1-8B-Instruct` Q4_K_M — ecossistema Meta; ~8B params, ligeiramente mais pesado |
+| **HF GGUF** | `bartowski/Qwen2.5-7B-Instruct-GGUF` |
+| **Pipeline** | activation v4, 4–8 stages |
+| **Licença** | Apache 2.0 |
+
+---
+
+#### Tier 5 — Horizon (~10 000 contribuintes)
+
+| Campo | Valor |
+|-------|-------|
+| **Primário** | `Qwen2.5-14B-Instruct` Q4_K_M |
+| **Parâmetros** | 14B |
+| **Disco** | ~8.5 GB |
+| **RAM agregada** | ~16–32 GB distribuídos (8–16 stages) |
+| **Porquê** | Realista com 2k+ contribuintes saudáveis; qualidade próxima de frontier local; escala sem MoE complexo |
+| **Stretch (rede forte)** | `Qwen2.5-32B-Instruct` Q4_K_M — quando `total_ram_gb` >> 40k |
+| **Alternativa MoE** | `Mixtral-8x7B-Instruct` Q4_K_M — experts distribuem naturalmente; mais complexo de operar |
+| **HF GGUF** | `bartowski/Qwen2.5-14B-Instruct-GGUF` |
+| **Pipeline** | activation v4, 8–16 stages |
+| **Licença** | Apache 2.0 |
+
+---
+
+### 3.6 Matriz rede → tier → modelo
+
+| Contribuintes online | RAM agregada (est.) | Tier | Modelo primário |
+|---------------------|---------------------|------|-----------------|
+| 2–9 | 4–20 GB | tier1 | SmolLM2-360M |
+| 10–99 | 20–200 GB | tier2 | Qwen2.5-1.5B |
+| 100–999 | 200 GB–2 TB | tier3 | Qwen2.5-3B |
+| 1 000–9 999 | 2–20 TB | tier4 | Qwen2.5-7B (sharded) |
+| 10 000+ | 20 TB+ | tier5 | Qwen2.5-14B (ou 32B) |
+
+### 3.7 Política de actualização de modelos
+
+| Regra | Detalhe |
+|-------|---------|
+| Só primário em produção | Alternativas ficam no doc; só entram no manifest após benchmark interno |
+| Revisão trimestral | Novos releases (Qwen3, SmolLM3, etc.) avaliados vs primário actual |
+| Sem downgrade silencioso | Mudança de modelo = novo `manifest.version` + changelog |
+| Hash obrigatório | Nenhum modelo sem `sha256` verificado entra em rollout |
 
 ---
 

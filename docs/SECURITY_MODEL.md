@@ -1,6 +1,6 @@
 # YouAI — Modelo de Segurança (design completo)
 
-> **Status:** design v1.0 · documento normativo  
+> **Status:** design v1.1 · documento normativo  
 > **Última atualização:** junho 2026  
 > **Relacionado:** [SECURITY.md](./SECURITY.md) (disclosure) · [MODEL_TIERS.md](./MODEL_TIERS.md) · [PRODUCT.md](./PRODUCT.md)
 
@@ -182,21 +182,190 @@ Resposta cifrada → App
 
 Os nós voluntários **nunca** recebem a chave de sessão do chat.
 
-### 6.4 Jobs assinados (roadmap imediato)
+### 6.4 Rede fechada — só contribuintes acedem à infra
 
-Todo pedido de inferência ao worker deve incluir:
+A infraestrutura YouAI (coordinator, jobs de inferência, registry de modelos para nós) **não é API pública aberta**.
+
+| Quem | Acesso | Como |
+|------|--------|------|
+| **Nó contribuinte** | ✅ register, heartbeat, jobs, registry | Token de nó + requests assinados |
+| **App oficial (chat)** | ✅ chat via coordinator | Credencial de dispositivo + E2E + requests assinados |
+| **Pessoa de fora / HTTP anónimo** | ❌ | Sem token → `401`; assinatura inválida → `403` |
+| **Scrapers / bots** | ❌ | Rate limit + assinatura obrigatória |
+
+**O que isto significa na prática:**
+
+- Não existe endpoint público tipo `POST /chat` sem autenticação.
+- Registar nó exige **opt-in de contribuição** (app ou CLI) — não é open relay.
+- Utilizadores só-chat usam o **app oficial**; não ligam directamente aos workers voluntários.
+- Workers **nunca** aceitam conexões da internet — só jobs assinados do coordinator (localhost).
+
+Utilizadores não-contribuintes podem usar chat com quota/crédito **através do app**, mas **não** acedem à camada de infra nem aos nós.
+
+---
+
+### 6.5 Blockchain — não usar no caminho crítico
+
+**Decisão:** YouAI **não** usa blockchain para segurança core.
+
+| Problema | Blockchain resolve? | Solução YouAI |
+|----------|---------------------|---------------|
+| Prompt privado nos nós | ❌ Não | **E2E** (ChaCha20-Poly1305) |
+| Job adulterado em trânsito | ❌ Overkill | **Ed25519** + timestamp + nonce |
+| Manifest de modelo trocado | Parcial, caro | **Manifest assinado** + SHA256 + git público |
+| Replay de request | ❌ Não nativo | **Nonce cache** + `expires_at` curto |
+| Auditoria imutável | Sim, mas lento | **Transparency log** (Merkle append-only) — opcional, fase 2 |
+
+**Porquê não blockchain:**
+
+- Latência e custo inaceitáveis para cada token de inferência
+- Não substitui E2E — dados ainda passariam em claro sem cifra de aplicação
+- Complexidade operacional (gas, wallets, forks) sem ganho de segurança proporcional
+- Open source + manifests assinados + CI público já dão auditabilidade
+
+**Conclusão:** **E2E para conteúdo** + **assinatura Ed25519/HMAC para integridade de requests** = stack correcta. Blockchain só se no futuro houver requisito legal de ledger distribuído (improvável).
+
+---
+
+### 6.6 Requests imutáveis — assinatura, timestamp, nonce
+
+Objectivo: **nenhum byte do request pode ser alterado** sem invalidar a assinatura. Replay e jobs expirados são rejeitados.
+
+#### Camadas (defesa em profundidade)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ 1. TLS 1.3          — transporte cifrado                │
+│ 2. E2E (chat)       — prompt/resposta opacos no coord.  │
+│ 3. Assinatura app   — integridade + autenticidade       │
+│ 4. Job signing      — worker só executa jobs assinados  │
+│ 5. Hash registry    — modelo imutável no disco do nó    │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### Formato canónico do request (v1)
+
+Todos os campos assinados em **JSON canónico** (chaves ordenadas, sem whitespace):
 
 ```json
 {
-  "job_id": "uuid",
-  "issued_at": 1710000000,
-  "expires_at": 1710000060,
-  "coordinator_sig": "ed25519:...",
-  "payload": { "op": "...", "session_id": "...", "blob": "..." }
+  "v": 1,
+  "type": "chat.completion",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "issued_at": 1719158400,
+  "expires_at": 1719158460,
+  "nonce": "8f3a2b1c4d5e6f70",
+  "actor": {
+    "kind": "node",
+    "id": "node-uuid",
+    "token_id": "tok_abc"
+  },
+  "body_hash": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "body": { "tier": "tier1", "mode": "pipeline_activation_v4", "blob": "..." }
 }
 ```
 
-Worker rejeita jobs expirados, sem assinatura, ou com schema desconhecido.
+| Campo | Função |
+|-------|--------|
+| `v` | Versão do schema — worker rejeita desconhecido |
+| `id` | ID único do request (idempotência) |
+| `issued_at` | Unix segundos UTC — relógio do emissor |
+| `expires_at` | TTL curto (30–120 s jobs; 5 min register) |
+| `nonce` | 64 bits aleatórios — anti-replay |
+| `body_hash` | SHA256 do `body` serializado — detecta alteração parcial |
+| `actor` | Quem assina (nó, app, coordinator) |
+
+#### Assinatura (preferir Ed25519; HMAC onde simétrico)
+
+**Produção — Ed25519 (assimétrico):**
+
+```text
+message = canonical_json({ v, type, id, issued_at, expires_at, nonce, actor, body_hash })
+signature = Ed25519_sign(private_key, message)
+header: X-YouAI-Signature: ed25519:<base64>
+header: X-YouAI-Key-Id: coordinator-v1
+```
+
+**Heartbeat nó ↔ coordinator — HMAC-SHA256 (simétrico, chave por nó):**
+
+```text
+message = "{issued_at}|{nonce}|{method}|{path}|{body_hash}"
+mac = HMAC-SHA256(node_secret, message)
+header: X-YouAI-MAC: hmac-sha256:<base64>
+```
+
+| Canal | Algoritmo | Porquê |
+|-------|-----------|--------|
+| Coordinator → Worker (job) | Ed25519 | Worker só precisa da chave pública |
+| App → Coordinator (chat) | Ed25519 (device key) | Sem segredo partilhado no cliente |
+| Nó → Coordinator (heartbeat) | HMAC-SHA256 | Leve; segredo gerado no register |
+| Registry manifest | Ed25519 | Verificável offline no nó |
+
+#### Validação (coordinator e worker)
+
+Ordem obrigatória — falha em qualquer passo → **rejeitar sem executar**:
+
+1. `expires_at > now()` — senão `408 Request Expired`
+2. `issued_at` dentro de janela (ex: ±60 s do relógio do servidor) — senão `400 Clock Skew`
+3. `nonce` não visto nos últimos N minutos (cache Redis/SQLite) — senão `409 Replay`
+4. `body_hash == SHA256(canonical(body))` — senão `400 Body Tampered`
+5. Verificar assinatura Ed25519/HMAC sobre campos **sem** incluir `body` em claro duplicado
+6. `actor.token_id` activo e não revogado
+7. Schema `type` na allowlist — senão `400 Unknown Operation`
+8. Só então executar
+
+**Regra:** worker **nunca** altera o request — só lê `payload`/`blob` opaco e responde.
+
+#### Job de inferência (coordinator → worker)
+
+```json
+{
+  "v": 1,
+  "type": "inference.pipeline_step",
+  "id": "job-uuid",
+  "issued_at": 1719158400,
+  "expires_at": 1719158460,
+  "nonce": "a1b2c3d4e5f60718",
+  "coordinator_sig": "ed25519:BASE64...",
+  "payload": {
+    "op": "forward_activation",
+    "session_id": "sess-uuid",
+    "stage": 0,
+    "blob": "base64-opaque-or-ciphertext"
+  }
+}
+```
+
+Worker rejeita: expirado, assinatura inválida, `op` desconhecido, `stage` ≠ config do nó.
+
+#### Manifest imutável (registry)
+
+```text
+manifest_bytes = canonical_json(manifest sem campo signature)
+signature = Ed25519_sign(maintainer_key, SHA256(manifest_bytes))
+```
+
+Nó recusa manifest com assinatura inválida ou `issued_at` mais antigo que o já instalado (anti-rollback).
+
+#### Transparency log (opcional, sem blockchain)
+
+- Maintainers publicam `SHA256(manifest)` num log append-only (ficheiro assinado ou CT-style)
+- Permite auditar que ninguém trocou modelo às escondidas
+- Nós podem verificar offline contra o log
+
+---
+
+### 6.7 Resumo: o que protege cada ameaça
+
+| Ameaça | E2E | Assinatura + nonce | Hash registry |
+|--------|-----|-------------------|---------------|
+| Ler prompt no nó | ✅ | — | — |
+| Alterar request MITM | parcial (TLS) | ✅ | — |
+| Replay de job | — | ✅ | — |
+| Modelo trocado | — | — | ✅ |
+| Coordinator comprometido | minimiza exposição E2E | limita janela | — |
+
+**E2E e assinatura são complementares — não alternativas.**
 
 ---
 
@@ -279,7 +448,8 @@ O utilizador e o contribuinte devem **sempre** poder ver:
 |------------|------|------------|
 | P0 | Path allowlist no worker | youai-worker |
 | P0 | Checklist PR no CONTRIBUTING | docs |
-| P1 | Job signing | coordinator + worker |
+| P1 | Request signing (Ed25519 + HMAC + nonce) | coordinator + worker + app |
+| P1 | Rede fechada — auth obrigatória | coordinator |
 | P1 | Model hash verification | node + registry |
 | P2 | E2E no app chat | youai-web / desktop |
 | P2 | Activation encryption | pipeline |
@@ -297,7 +467,8 @@ O utilizador e o contribuinte devem **sempre** poder ver:
 | Outbound-only | ✅ Por design |
 | Prompt opaco nos nós (pipeline) | ⚠️ Activations em claro no coordinator (LAN) |
 | E2E chat | ❌ Planeado |
-| Job signing | ❌ Planeado |
+| Job signing (Ed25519/HMAC) | ❌ Planeado — spec em §6.6 |
+| Rede fechada (só contribuintes) | ❌ Planeado — spec em §6.4 |
 | Model registry com hash | ⚠️ `registry/manifest.json` tier1 · verify no node planeado |
 | Pausa inteligente | ❌ Planeado |
 
