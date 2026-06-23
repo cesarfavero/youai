@@ -1,10 +1,11 @@
-//! YouAI Node CLI
-//!
-//! Entry point for contributors: config, start, pause, status.
-//! See docs/NEXT_STEPS.md — Passos 5–7 for implementation plan.
+//! YouAI Node CLI — config, start, pause, status for contributor nodes.
 
+mod runtime;
+
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tracing::info;
+use youai_common::{load_config, save_config, worker_url, NodeConfig};
 
 #[derive(Parser, Debug)]
 #[command(name = "youai-node", about = "YouAI contributor node CLI", version)]
@@ -15,50 +16,185 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Show node status and resource usage
+    /// Show node status and cluster overview
     Status,
     /// Pause contribution immediately
     Pause,
-    /// Start contributing (guard → worker → coordinator)
+    /// Start contributing (worker + coordinator registration)
     Start {
-        /// Coordinator URL
+        /// Coordinator base URL (e.g. http://192.168.1.10:8080)
         #[arg(long)]
         coordinator: Option<String>,
+        /// Worker listen host (LAN IP for multi-machine tests)
+        #[arg(long)]
+        worker_host: Option<String>,
+        /// Worker listen port
+        #[arg(long)]
+        worker_port: Option<u16>,
+        /// Node display name
+        #[arg(long)]
+        name: Option<String>,
     },
-    /// Configure resource limits
+    /// Configure resource limits and defaults
     Config {
         #[arg(long)]
         cpu_percent: Option<u8>,
         #[arg(long)]
         ram_max: Option<String>,
+        #[arg(long)]
+        coordinator: Option<String>,
+        #[arg(long)]
+        worker_host: Option<String>,
+        #[arg(long)]
+        worker_port: Option<u16>,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        model_path: Option<String>,
+        #[arg(long)]
+        llama_cli: Option<String>,
+        #[arg(long)]
+        region: Option<String>,
     },
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
+    if let Err(err) = run().await {
+        eprintln!("youai-node error: {err:#}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info".into()),
         )
         .init();
 
     let cli = Cli::parse();
-
     match cli.command {
-        Commands::Status => info!("status: not implemented"),
-        Commands::Pause => info!("pause: not implemented"),
-        Commands::Start { coordinator } => {
-            info!(?coordinator, "start: not implemented");
+        Commands::Status => {
+            let config = load_config().context("load config")?;
+            runtime::show_status(&config).await?;
+        }
+        Commands::Pause => {
+            runtime::pause_running_node()?;
+            println!("node paused");
+        }
+        Commands::Start {
+            coordinator,
+            worker_host,
+            worker_port,
+            name,
+        } => {
+            let mut config = load_config().context("load config")?;
+            apply_overrides(
+                &mut config,
+                coordinator,
+                worker_host,
+                worker_port,
+                name,
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
+            save_config(&config)?;
+
+            info!(
+                name = %config.name,
+                coordinator = %config.coordinator_url,
+                worker = %worker_url(&config.worker_host, config.worker_port),
+                "starting node"
+            );
+
+            let node = runtime::NodeRuntime::start(config).await?;
+            println!(
+                "node started — worker {} · Ctrl+C to stop",
+                node.worker_url
+            );
+            node.run_until_stopped().await?;
         }
         Commands::Config {
             cpu_percent,
             ram_max,
+            coordinator,
+            worker_host,
+            worker_port,
+            name,
+            model,
+            model_path,
+            llama_cli,
+            region,
         } => {
-            info!(?cpu_percent, ?ram_max, "config: not implemented");
+            let mut config = load_config().context("load config")?;
+            apply_overrides(
+                &mut config,
+                coordinator,
+                worker_host,
+                worker_port,
+                name,
+                cpu_percent,
+                ram_max,
+                model,
+                model_path,
+                llama_cli,
+            );
+            if let Some(region) = region {
+                config.region = region;
+            }
+            save_config(&config)?;
+            println!("config saved to {}", youai_common::config_path()?.display());
+            runtime::show_status(&config).await?;
         }
     }
+    Ok(())
+}
 
-    eprintln!(
-        "youai-node v{} — CLI scaffold (see docs/NEXT_STEPS.md)",
-        env!("CARGO_PKG_VERSION")
-    );
+#[allow(clippy::too_many_arguments)]
+fn apply_overrides(
+    config: &mut NodeConfig,
+    coordinator: Option<String>,
+    worker_host: Option<String>,
+    worker_port: Option<u16>,
+    name: Option<String>,
+    cpu_percent: Option<u8>,
+    ram_max: Option<String>,
+    model: Option<String>,
+    model_path: Option<String>,
+    llama_cli: Option<String>,
+) {
+    if let Some(coordinator) = coordinator {
+        config.coordinator_url = coordinator;
+    }
+    if let Some(worker_host) = worker_host {
+        config.worker_host = worker_host;
+    }
+    if let Some(worker_port) = worker_port {
+        config.worker_port = worker_port;
+    }
+    if let Some(name) = name {
+        config.name = name;
+    }
+    if let Some(cpu_percent) = cpu_percent {
+        config.resources.cpu_percent = cpu_percent;
+    }
+    if let Some(ram_max) = ram_max {
+        config.resources.ram_max = ram_max;
+    }
+    if let Some(model) = model {
+        config.model.name = model;
+    }
+    if let Some(model_path) = model_path {
+        config.model.path = Some(model_path);
+    }
+    if let Some(llama_cli) = llama_cli {
+        config.runtime.llama_cli = Some(llama_cli);
+    }
 }
