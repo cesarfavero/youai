@@ -54,8 +54,7 @@ async fn main() {
 async fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -100,6 +99,7 @@ async fn exec_infer(
         prompt,
         max_tokens,
         timeout: youai_worker::llama::default_timeout(),
+        rpc_servers: vec![],
     })?;
 
     println!("{text}");

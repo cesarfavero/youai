@@ -74,30 +74,45 @@ On a contributor machine, three processes cooperate:
 
 ## MVP Data Flow
 
+### Réplica (default quando pipeline indisponível)
+
 ```
 User (browser)
     │
-    ▼ POST /chat (SSE stream)
-youai-web
-    │
-    ▼ route by model tier + credit
+    ▼ POST /api/v1/chat
 youai-coordinator
     │
-    ▼ signed inference job
-youai-node (replica round-robin)
-    │
-    ▼ guard → worker
-llama.cpp (Nex-N2-mini GGUF)
+    ▼ round-robin entre nós com mesmo modelo
+youai-node → guard → youai-worker → llama-completion
     │
     ▼ tokens
-User ← coordinator ← web
+User ← coordinator
 ```
+
+### Pipeline v1 (RPC tensor split)
+
+Um pedido, uma inferência no stage 0; tensores offload para `rpc-server` nos stages 1+.
+
+```
+POST /api/v1/chat  mode=pipeline|auto
+        │
+        ▼
+youai-coordinator (resolve_pipeline → stages 0..N-1)
+        │
+        ▼ POST /infer  rpc_servers=[stage1.rpc_url, ...]
+stage 0 worker (llama-completion --rpc host:port)
+        │
+        ├── local Metal/CPU
+        └── TCP → rpc-server (stage 1+)  [GGML tensors na rede]
+```
+
+Ver [PIPELINE.md](./PIPELINE.md) para setup e troubleshooting.
 
 ## MVP Scope vs Future
 
 | Feature | MVP (phase 1) | Later |
 |---------|---------------|-------|
-| Routing | Replica round-robin | MoE expert sharding |
+| Routing | Replica round-robin + pipeline RPC v1 | MoE expert sharding · GGUF por camadas (v2) |
 | Models | Nex-N2-mini | N2-Pro, GLM-5.2 |
 | Mobile | — | Phase 4 |
 | GPU guard | Basic / NVML | Full thermal + pause |

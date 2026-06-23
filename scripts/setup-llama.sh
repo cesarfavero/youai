@@ -16,11 +16,12 @@ fi
 
 mkdir -p "${LLAMA_DIR}/build"
 
-CMAKE_ARGS=(-DCMAKE_BUILD_TYPE="${BUILD_TYPE}")
+CMAKE_ARGS=(-DCMAKE_BUILD_TYPE="${BUILD_TYPE}" -DGGML_RPC=ON)
 if [[ "$(uname -s)" == "Darwin" ]]; then
   echo "macOS detected — enabling Metal (M1/M2/M3)"
   CMAKE_ARGS+=(-DGGML_METAL=ON)
 fi
+echo "Building llama.cpp with RPC tensor offload (GGML_RPC=ON)"
 
 cmake -S "${LLAMA_DIR}" -B "${LLAMA_DIR}/build" "${CMAKE_ARGS[@]}"
 
@@ -41,8 +42,12 @@ if [[ ! -f "${CLI_BIN}" ]]; then
 fi
 
 echo ""
+RPC_BIN="${LLAMA_DIR}/build/bin/rpc-server"
 echo "llama.cpp ready (YouAI uses llama-completion for one-shot inference):"
 echo "  ${CLI_BIN}"
+if [[ -f "${RPC_BIN}" ]]; then
+  echo "  ${RPC_BIN}  (RPC tensor backend for distributed inference)"
+fi
 echo ""
 echo "Optional config (~/.youai/config.toml):"
 echo "  [runtime]"

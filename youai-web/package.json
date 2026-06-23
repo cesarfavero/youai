@@ -4,9 +4,9 @@
   "private": true,
   "description": "YouAI web chat — credit dashboard and SSE streaming",
   "scripts": {
-    "dev": "echo 'youai-web scaffold — Next.js setup pending (see docs/NEXT_STEPS.md passo 9)' && exit 0",
-    "build": "echo 'youai-web scaffold — build pending' && exit 0",
-    "lint": "echo 'youai-web scaffold — lint pending' && exit 0"
+    "dev": "python3 -m http.server 3000 --directory public",
+    "build": "echo 'Static chat UI in public/ — served by youai-coordinator or npm run dev'",
+    "lint": "echo 'No lint configured for static MVP chat'"
   },
   "engines": {
     "node": ">=20"

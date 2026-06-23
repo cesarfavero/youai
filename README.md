@@ -7,6 +7,7 @@ Rede global open source onde cada PC, celular e VPS contribui com uma fração d
 ## Documentação
 
 - [**Próximos passos**](docs/NEXT_STEPS.md) — o que fazer agora, em ordem
+- [**Pipeline distribuído**](docs/PIPELINE.md) — réplica vs pipeline, RPC v1, teste 2 máquinas
 - [MVP & Visão do Produto](docs/MVP.md) — arquitetura, roadmap, escopo
 - [Arquitetura](docs/ARCHITECTURE.md) — camadas e componentes
 - [Segurança](docs/SECURITY.md) — política de disclosure e limites do nó
@@ -14,7 +15,10 @@ Rede global open source onde cada PC, celular e VPS contribui com uma fração d
 
 ## Status
 
-🚧 **Fase 0** — docs legais + scaffold do monorepo (sem implementação de rede ainda)
+✅ **Dogfood local** — guard + worker + node CLI + coordinator + chat mínimo  
+✅ **Cluster 2 máquinas** — Mac + Colima VM (réplica round-robin)  
+✅ **Pipeline v1** — split real de tensores via llama.cpp RPC (`docs/PIPELINE.md`)  
+🔜 **Pipeline v2** — GGUF partido por camadas (`llama-gguf-split`)
 
 **Repo:** [github.com/cesarfavero/youai](https://github.com/cesarfavero/youai) · público · issues e PRs bem-vindos
 
@@ -70,9 +74,17 @@ Scripts utilitários:
 
 ```bash
 chmod +x scripts/*.sh
-./scripts/install.sh
-./scripts/benchmark-model.sh --model ~/.youai/models/n2-mini.gguf
+./scripts/setup-llama.sh          # llama.cpp + rpc-server
+./scripts/download-model.sh       # SmolLM2-360M (dogfood)
+./scripts/benchmark-model.sh
+
+# Cluster 2 máquinas (Mac + Colima)
+./scripts/setup-pipeline-mac.sh
+./scripts/ubuntu-test-vm.sh start-node
+./scripts/test-shard-pipeline.sh
 ```
+
+Ver [docs/PIPELINE.md](docs/PIPELINE.md) para detalhes do pipeline v1.
 
 ## Licença
 

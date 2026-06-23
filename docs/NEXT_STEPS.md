@@ -17,8 +17,8 @@ youai/
     └── NEXT_STEPS.md   ← você está aqui
 ```
 
-**Fase atual:** 0 — pré-código (só documentação)  
-**Meta imediata:** Fase 0 dogfood → guard + llama.cpp local em 1 máquina  
+**Fase atual:** dogfood multi-máquina — réplica + **pipeline v1 (RPC)** ✅  
+**Meta imediata:** **pipeline v2** — GGUF partido por camadas (`llama-gguf-split`)  
 **Meta MVP:** 10–50 PCs · Nex-N2-mini · chat free · crédito básico
 
 ---
@@ -234,21 +234,33 @@ youai-coordinator --port 8080
 
 ---
 
-## Passo 8 — Sharding simples (MVP rede)
+## Passo 8 — Sharding / pipeline (MVP rede) ✅ parcial
 
-**Objetivo:** modelo partido em 2+ nós OU réplica simples (escolher um pro MVP).
+**Feito:**
 
-**Decisão importante** — escolha antes de implementar:
+- [x] **Réplica** — round-robin com health check (`mode=replica` ou `auto`)
+- [x] **Pipeline v1** — split de tensores via llama.cpp RPC (`docs/PIPELINE.md`)
+- [x] Teste Mac + Colima: `./scripts/test-shard-pipeline.sh`
 
-| Opção | Complexidade | Pro MVP? |
-|-------|--------------|----------|
-| **A) Réplica** — mesmo modelo em N nós, coordinator faz round-robin | Baixa | ✅ recomendado |
-| **B) Shard** — cada nó uma parte do modelo | Alta | ❌ fase 2 |
+**Critério de sucesso (réplica):** chat usa nó B se nó A cair. ✅  
+**Critério de sucesso (pipeline v1):** um pedido usa Mac + VM com `--rpc`. ✅
 
-**Pedir no Cursor (opção A):**
-> "Coordinator com round-robin entre nós que hospedam o mesmo modelo Nex-N2-mini"
+### Pipeline v2 — GGUF por camadas
 
-**Critério de sucesso:** chat usa nó B se nó A cair.
+**Objetivo:** cada nó carrega **só as camadas** que lhe cabem — ficheiros GGUF separados, activações entre estágios (não só offload por memória).
+
+**Pedir no Cursor:**
+> "Implementa pipeline v2: llama-gguf-split por camadas, stage N carrega shard-N.gguf, coordinator encadeia activações entre workers"
+
+**Escopo mínimo v2:**
+
+- [ ] Script `split-model.sh` — `llama-gguf-split` para 2 shards
+- [ ] `NodeConfig` / registo: `layer_start`, `layer_end` ou path do shard
+- [ ] Worker: carregar só o GGUF do estágio (sem modelo completo)
+- [ ] Coordinator: pipeline encadeado (stage 0 → 1 → …) com tensores de activação
+- [ ] Teste 2 máquinas com modelo maior que 1 nó sozinho
+
+**Referência:** [PIPELINE.md](./PIPELINE.md) · llama.cpp `tools/gguf-split`
 
 ---
 
@@ -386,6 +398,7 @@ O MVP está pronto quando **todos** forem verdade:
 
 ## Links rápidos internos
 
+- [Pipeline distribuído (v1 RPC)](./PIPELINE.md)
 - [Visão e arquitetura](./MVP.md)
 - [README do projeto](../README.md)
 

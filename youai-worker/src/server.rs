@@ -63,6 +63,7 @@ async fn infer(
         prompt: body.prompt,
         max_tokens: body.max_tokens,
         timeout: default_timeout(),
+        rpc_servers: body.rpc_servers,
     };
 
     let state_for_task = state.clone();

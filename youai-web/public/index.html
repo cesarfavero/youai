@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>YouAI Chat</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0f14;
+      --panel: #121820;
+      --border: #1e2a38;
+      --text: #e8eef5;
+      --muted: #8fa3b8;
+      --accent: #3d8bfd;
+      --user: #1a3a5c;
+      --bot: #151c26;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      background: var(--panel);
+    }
+    header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    header p { margin: 0.15rem 0 0; font-size: 0.8rem; color: var(--muted); }
+    #cluster { font-size: 0.75rem; color: var(--muted); text-align: right; }
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      max-width: 820px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1rem;
+      gap: 1rem;
+    }
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      min-height: 50vh;
+      padding: 0.25rem;
+    }
+    .msg {
+      max-width: 90%;
+      padding: 0.75rem 1rem;
+      border-radius: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user { align-self: flex-end; background: var(--user); }
+    .msg.bot { align-self: flex-start; background: var(--bot); border: 1px solid var(--border); }
+    .meta { font-size: 0.7rem; color: var(--muted); margin-top: 0.35rem; }
+    form {
+      display: flex;
+      gap: 0.5rem;
+      border-top: 1px solid var(--border);
+      padding-top: 1rem;
+    }
+    input, button {
+      font: inherit;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+    input {
+      flex: 1;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0.75rem 1rem;
+    }
+    input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 0.75rem 1.1rem;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .empty { color: var(--muted); text-align: center; margin-top: 2rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>YouAI Chat</h1>
+      <p>IA distribuída — cada mensagem vai para um nó do cluster</p>
+    </div>
+    <div id="cluster">Carregando nós…</div>
+  </header>
+  <main>
+    <div id="messages">
+      <div class="empty">Envie uma mensagem. O coordinator escolhe um nó online para responder.</div>
+    </div>
+    <form id="chat-form">
+      <input id="prompt" type="text" placeholder="Digite sua mensagem…" autocomplete="off" required />
+      <button type="submit" id="send-btn">Enviar</button>
+    </form>
+  </main>
+  <script>
+    const API = window.location.origin;
+    const messages = document.getElementById('messages');
+    const form = document.getElementById('chat-form');
+    const promptInput = document.getElementById('prompt');
+    const sendBtn = document.getElementById('send-btn');
+    const clusterEl = document.getElementById('cluster');
+
+    async function refreshCluster() {
+      try {
+        const res = await fetch(`${API}/api/v1/nodes`);
+        const data = await res.json();
+        const online = (data.nodes || []).filter(n => n.online);
+        clusterEl.textContent = `${online.length} nó(s) online`;
+      } catch {
+        clusterEl.textContent = 'Coordinator offline';
+      }
+    }
+
+    function addMessage(role, text, meta) {
+      const empty = messages.querySelector('.empty');
+      if (empty) empty.remove();
+      const el = document.createElement('div');
+      el.className = `msg ${role}`;
+      el.textContent = text;
+      if (meta) {
+        const m = document.createElement('div');
+        m.className = 'meta';
+        m.textContent = meta;
+        el.appendChild(m);
+      }
+      messages.appendChild(el);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const prompt = promptInput.value.trim();
+      if (!prompt) return;
+      promptInput.value = '';
+      sendBtn.disabled = true;
+      addMessage('user', prompt);
+      try {
+        const res = await fetch(`${API}/api/v1/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, max_tokens: 128 }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        let meta = `modo: ${data.mode || 'replica'} · nó final: ${data.node_name} · modelo: ${data.model}`;
+        if (data.stages && data.stages.length > 1) {
+          meta += ' · pipeline: ' + data.stages.map(s => `${s.node_name}@${s.shard_stage}`).join(' → ');
+        }
+        addMessage('bot', data.text, meta);
+      } catch (err) {
+        addMessage('bot', `Erro: ${err.message}`, 'tente novamente');
+      } finally {
+        sendBtn.disabled = false;
+        promptInput.focus();
+        refreshCluster();
+      }
+    });
+
+    refreshCluster();
+    setInterval(refreshCluster, 15000);
+    promptInput.focus();
+  </script>
+</body>
+</html>

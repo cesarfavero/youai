@@ -13,6 +13,12 @@ pub const NODE_STALE_SECS: i64 = 90;
 /// Default tiny model for 2-node dogfood (SmolLM2-360M-Instruct Q4_K_M, ~220 MB).
 pub const DEFAULT_MODEL_FILENAME: &str = "smollm2-360m-instruct-q4_k_m.gguf";
 
+/// Pipeline shard group for multi-machine single-request inference.
+pub const DEFAULT_PIPELINE_GROUP: &str = "default-pipeline";
+
+/// Default llama.cpp RPC server port (ggml tensor offload).
+pub const DEFAULT_RPC_PORT: u16 = 50052;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeConfig {
     #[serde(default = "default_node_name")]
@@ -25,6 +31,9 @@ pub struct NodeConfig {
     pub worker_host: String,
     #[serde(default = "default_worker_port")]
     pub worker_port: u16,
+    /// URL sent to coordinator (use when worker bind host differs from reachable address).
+    #[serde(default)]
+    pub worker_advertise_url: Option<String>,
     #[serde(default)]
     pub resources: ResourceConfig,
     #[serde(default)]
@@ -33,6 +42,38 @@ pub struct NodeConfig {
     pub runtime: RuntimeConfig,
     #[serde(default)]
     pub node: PersistedNodeState,
+    #[serde(default)]
+    pub shard: ShardConfig,
+    /// This node's llama.cpp RPC listen/advertise address (stage 1+ backends).
+    #[serde(default)]
+    pub rpc_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShardConfig {
+    /// Pipeline group id (empty = replica-only node).
+    #[serde(default)]
+    pub group: String,
+    /// Zero-based stage index in the pipeline.
+    #[serde(default)]
+    pub stage: u8,
+    /// Total stages in this pipeline (1 = no pipeline).
+    #[serde(default = "default_shard_total_stages")]
+    pub total_stages: u8,
+}
+
+impl Default for ShardConfig {
+    fn default() -> Self {
+        Self {
+            group: String::new(),
+            stage: 0,
+            total_stages: default_shard_total_stages(),
+        }
+    }
+}
+
+fn default_shard_total_stages() -> u8 {
+    1
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -71,10 +112,13 @@ impl Default for NodeConfig {
             coordinator_url: default_coordinator_url(),
             worker_host: default_worker_host(),
             worker_port: default_worker_port(),
+            worker_advertise_url: None,
             resources: ResourceConfig::default(),
             model: ModelConfig::default(),
             runtime: RuntimeConfig::default(),
             node: PersistedNodeState::default(),
+            shard: ShardConfig::default(),
+            rpc_url: None,
         }
     }
 }
@@ -223,6 +267,25 @@ pub fn resolve_llama_cli(config: &NodeConfig) -> Result<PathBuf> {
     );
 }
 
+pub fn resolve_rpc_server() -> Result<PathBuf> {
+    let candidates = [
+        youai_dir()?.join("llama.cpp/build/bin/rpc-server"),
+        PathBuf::from("/usr/local/bin/rpc-server"),
+    ];
+
+    for candidate in candidates {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    if let Ok(path) = which_binary("rpc-server") {
+        return Ok(path);
+    }
+
+    anyhow::bail!("rpc-server not found. Rebuild llama.cpp with RPC: ./scripts/setup-llama.sh");
+}
+
 fn which_binary(name: &str) -> Result<PathBuf> {
     let output = std::process::Command::new("which")
         .arg(name)
@@ -251,6 +314,18 @@ pub fn worker_url(host: &str, port: u16) -> String {
     format!("http://{host}:{port}")
 }
 
+/// Host for local health checks (0.0.0.0 / :: are bind-all, not dialable).
+pub fn worker_local_health_host(host: &str) -> &str {
+    match host {
+        "0.0.0.0" | "::" | "[::]" => "127.0.0.1",
+        other => other,
+    }
+}
+
+pub fn worker_health_url(host: &str, port: u16) -> String {
+    format!("http://{}:{port}", worker_local_health_host(host))
+}
+
 // --- Coordinator API types ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,6 +334,14 @@ pub struct RegisterNodeRequest {
     pub region: String,
     pub worker_url: String,
     pub model: String,
+    #[serde(default)]
+    pub shard_group: String,
+    #[serde(default)]
+    pub shard_stage: u8,
+    #[serde(default = "default_shard_total_stages")]
+    pub shard_total_stages: u8,
+    #[serde(default)]
+    pub rpc_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -281,6 +364,15 @@ pub struct NodeInfo {
     pub model: String,
     pub online: bool,
     pub last_heartbeat: i64,
+    #[serde(default)]
+    pub shard_group: String,
+    #[serde(default)]
+    pub shard_stage: u8,
+    #[serde(default = "default_shard_total_stages")]
+    pub shard_total_stages: u8,
+    /// llama.cpp RPC endpoint (host:port) for tensor offload backends.
+    #[serde(default)]
+    pub rpc_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,10 +381,27 @@ pub struct NodesResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneNodesResponse {
+    pub removed: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatRequest {
     pub prompt: String,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
+    /// auto: pipeline when a full shard chain is online, else replica.
+    #[serde(default)]
+    pub mode: ChatRoutingMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatRoutingMode {
+    #[default]
+    Auto,
+    Replica,
+    Pipeline,
 }
 
 fn default_max_tokens() -> u32 {
@@ -305,6 +414,18 @@ pub struct ChatResponse {
     pub node_name: String,
     pub model: String,
     pub text: String,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub stages: Vec<ChatStageInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatStageInfo {
+    pub node_id: String,
+    pub node_name: String,
+    pub shard_stage: u8,
+    pub partial_text: String,
 }
 
 // --- Worker API types ---
@@ -314,6 +435,9 @@ pub struct InferRequest {
     pub prompt: String,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
+    /// Remote llama.cpp RPC servers (host:port) for real tensor split.
+    #[serde(default)]
+    pub rpc_servers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -31,9 +31,22 @@ enum Commands {
         /// Worker listen port
         #[arg(long)]
         worker_port: Option<u16>,
+        /// URL advertised to coordinator (if different from worker bind address)
+        #[arg(long)]
+        worker_advertise_url: Option<String>,
+        /// Pipeline shard group (empty = replica-only)
+        #[arg(long)]
+        shard_group: Option<String>,
+        #[arg(long)]
+        shard_stage: Option<u8>,
+        #[arg(long)]
+        shard_total_stages: Option<u8>,
         /// Node display name
         #[arg(long)]
         name: Option<String>,
+        /// llama.cpp RPC endpoint advertised to coordinator (host:port)
+        #[arg(long)]
+        rpc_url: Option<String>,
     },
     /// Configure resource limits and defaults
     Config {
@@ -56,7 +69,17 @@ enum Commands {
         #[arg(long)]
         llama_cli: Option<String>,
         #[arg(long)]
+        worker_advertise_url: Option<String>,
+        #[arg(long)]
+        shard_group: Option<String>,
+        #[arg(long)]
+        shard_stage: Option<u8>,
+        #[arg(long)]
+        shard_total_stages: Option<u8>,
+        #[arg(long)]
         region: Option<String>,
+        #[arg(long)]
+        rpc_url: Option<String>,
     },
 }
 
@@ -71,8 +94,7 @@ async fn main() {
 async fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -90,7 +112,12 @@ async fn run() -> Result<()> {
             coordinator,
             worker_host,
             worker_port,
+            worker_advertise_url,
+            shard_group,
+            shard_stage,
+            shard_total_stages,
             name,
+            rpc_url,
         } => {
             let mut config = load_config().context("load config")?;
             apply_overrides(
@@ -105,20 +132,25 @@ async fn run() -> Result<()> {
                 None,
                 None,
             );
+            apply_shard_overrides(&mut config, shard_group, shard_stage, shard_total_stages);
+            if let Some(url) = worker_advertise_url {
+                config.worker_advertise_url = Some(url);
+            }
+            if let Some(url) = rpc_url {
+                config.rpc_url = Some(url);
+            }
             save_config(&config)?;
 
             info!(
                 name = %config.name,
                 coordinator = %config.coordinator_url,
                 worker = %worker_url(&config.worker_host, config.worker_port),
+                rpc = ?config.rpc_url,
                 "starting node"
             );
 
             let node = runtime::NodeRuntime::start(config).await?;
-            println!(
-                "node started — worker {} · Ctrl+C to stop",
-                node.worker_url
-            );
+            println!("node started — worker {} · Ctrl+C to stop", node.worker_url);
             node.run_until_stopped().await?;
         }
         Commands::Config {
@@ -131,7 +163,12 @@ async fn run() -> Result<()> {
             model,
             model_path,
             llama_cli,
+            worker_advertise_url,
+            shard_group,
+            shard_stage,
+            shard_total_stages,
             region,
+            rpc_url,
         } => {
             let mut config = load_config().context("load config")?;
             apply_overrides(
@@ -146,8 +183,15 @@ async fn run() -> Result<()> {
                 model_path,
                 llama_cli,
             );
+            apply_shard_overrides(&mut config, shard_group, shard_stage, shard_total_stages);
+            if let Some(url) = worker_advertise_url {
+                config.worker_advertise_url = Some(url);
+            }
             if let Some(region) = region {
                 config.region = region;
+            }
+            if let Some(url) = rpc_url {
+                config.rpc_url = Some(url);
             }
             save_config(&config)?;
             println!("config saved to {}", youai_common::config_path()?.display());
@@ -196,5 +240,22 @@ fn apply_overrides(
     }
     if let Some(llama_cli) = llama_cli {
         config.runtime.llama_cli = Some(llama_cli);
+    }
+}
+
+fn apply_shard_overrides(
+    config: &mut NodeConfig,
+    shard_group: Option<String>,
+    shard_stage: Option<u8>,
+    shard_total_stages: Option<u8>,
+) {
+    if let Some(group) = shard_group {
+        config.shard.group = group;
+    }
+    if let Some(stage) = shard_stage {
+        config.shard.stage = stage;
+    }
+    if let Some(total) = shard_total_stages {
+        config.shard.total_stages = total;
     }
 }

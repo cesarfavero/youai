@@ -135,9 +135,10 @@ impl CgroupSampler {
         let num_cpus = std::thread::available_parallelism()
             .map(|n| n.get() as u32)
             .unwrap_or(1);
+        let last_cpu_usec = read_cpu_usage_usec(&cgroup_path)?;
         Ok(Self {
             cgroup_path,
-            last_cpu_usec: read_cpu_usage_usec(&cgroup_path)?,
+            last_cpu_usec,
             num_cpus,
         })
     }
@@ -223,14 +224,73 @@ pub fn spawn_in_cgroup(
 
 pub fn run_command(command: &[String], limits: ResourceLimits) -> Result<RunOutcome> {
     let name = format!("youai-guard-{}", std::process::id());
-    let cgroup = CgroupGuard::create(&name, limits)?;
-    let mut child = spawn_in_cgroup(&cgroup, command, limits.ram_max_bytes)?;
+    match CgroupGuard::create(&name, limits) {
+        Ok(cgroup) => run_with_cgroup(&cgroup, command, limits),
+        Err(err) => {
+            warn!(
+                error = %err,
+                "cgroup v2 unavailable — falling back to setrlimit + ps watchdog (best-effort)"
+            );
+            run_without_cgroup(command, limits)
+        }
+    }
+}
+
+fn run_with_cgroup(
+    cgroup: &CgroupGuard,
+    command: &[String],
+    limits: ResourceLimits,
+) -> Result<RunOutcome> {
+    let mut child = spawn_in_cgroup(cgroup, command, limits.ram_max_bytes)?;
     let pid = child.id();
 
     info!(pid, command = ?command, "child started under cgroup");
 
     let mut sampler = CgroupSampler::new(cgroup.path().to_path_buf())?;
-    let mut watchdog = Watchdog::new(limits, &mut sampler);
+    supervise_child(&mut child, pid, limits, &mut sampler)
+}
+
+fn run_without_cgroup(command: &[String], limits: ResourceLimits) -> Result<RunOutcome> {
+    if command.is_empty() {
+        bail!("empty command");
+    }
+
+    let program = &command[0];
+    let args = &command[1..];
+    let ram_bytes = limits.ram_max_bytes;
+
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    unsafe {
+        cmd.pre_exec(move || {
+            let rlim = libc::rlimit {
+                rlim_cur: ram_bytes,
+                rlim_max: ram_bytes,
+            };
+            let _ = libc::setrlimit(libc::RLIMIT_AS, &rlim);
+            Ok(())
+        });
+    }
+
+    let mut child = cmd.spawn().with_context(|| format!("spawn {program}"))?;
+    let pid = child.id();
+    info!(pid, command = ?command, "child started without cgroup");
+
+    let mut sampler = ProcessSampler::new(pid)?;
+    supervise_child(&mut child, pid, limits, &mut sampler)
+}
+
+fn supervise_child(
+    child: &mut Child,
+    pid: u32,
+    limits: ResourceLimits,
+    sampler: &mut dyn UsageSampler,
+) -> Result<RunOutcome> {
+    let mut watchdog = Watchdog::new(limits, sampler);
 
     let outcome = watchdog.run(|| match child.try_wait() {
         Ok(None) => true,
@@ -248,6 +308,81 @@ pub fn run_command(command: &[String], limits: ResourceLimits) -> Result<RunOutc
             let _ = child.wait();
             Ok(RunOutcome::KilledByGuard(outcome))
         }
+    }
+}
+
+struct ProcessSampler {
+    pid: u32,
+    last_cpu_time: f64,
+    num_cpus: u32,
+}
+
+impl ProcessSampler {
+    fn new(pid: u32) -> Result<Self> {
+        let num_cpus = std::thread::available_parallelism()
+            .map(|n| n.get() as u32)
+            .unwrap_or(1);
+        Ok(Self {
+            pid,
+            last_cpu_time: process_cpu_time(pid)?,
+            num_cpus,
+        })
+    }
+}
+
+impl UsageSampler for ProcessSampler {
+    fn sample_memory_bytes(&self) -> Result<u64> {
+        let output = Command::new("ps")
+            .args(["-o", "rss=", "-p", &self.pid.to_string()])
+            .output()
+            .context("ps rss")?;
+        if !output.status.success() {
+            return Ok(0);
+        }
+        let kb: u64 = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        Ok(kb * 1024)
+    }
+
+    fn sample_cpu_usage_percent(&mut self, elapsed: Duration) -> Result<f64> {
+        let cpu_time = process_cpu_time(self.pid)?;
+        let delta = (cpu_time - self.last_cpu_time).max(0.0);
+        self.last_cpu_time = cpu_time;
+
+        let elapsed_secs = elapsed.as_secs_f64().max(0.001);
+        let capacity = elapsed_secs * f64::from(self.num_cpus);
+        Ok((delta / capacity) * 100.0)
+    }
+}
+
+fn process_cpu_time(pid: u32) -> Result<f64> {
+    let output = Command::new("ps")
+        .args(["-o", "time=", "-p", &pid.to_string()])
+        .output()
+        .context("ps time")?;
+    if !output.status.success() {
+        return Ok(0.0);
+    }
+    parse_ps_time(String::from_utf8_lossy(&output.stdout).trim())
+}
+
+fn parse_ps_time(raw: &str) -> Result<f64> {
+    let parts: Vec<&str> = raw.split(':').collect();
+    match parts.len() {
+        2 => {
+            let mins: f64 = parts[0].parse().unwrap_or(0.0);
+            let secs: f64 = parts[1].parse().unwrap_or(0.0);
+            Ok(mins * 60.0 + secs)
+        }
+        3 => {
+            let hours: f64 = parts[0].parse().unwrap_or(0.0);
+            let mins: f64 = parts[1].parse().unwrap_or(0.0);
+            let secs: f64 = parts[2].parse().unwrap_or(0.0);
+            Ok(hours * 3600.0 + mins * 60.0 + secs)
+        }
+        _ => Ok(0.0),
     }
 }
 

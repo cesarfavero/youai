@@ -7,8 +7,8 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 use youai_common::{
     clear_runtime_state, is_process_alive, load_runtime_state, save_config, save_runtime_state,
-    worker_url, HeartbeatRequest, NodeConfig, RegisterNodeRequest, RegisterNodeResponse,
-    RuntimeState, HEARTBEAT_INTERVAL_SECS,
+    worker_health_url, worker_url, HeartbeatRequest, NodeConfig, RegisterNodeRequest,
+    RegisterNodeResponse, RuntimeState, HEARTBEAT_INTERVAL_SECS,
 };
 
 pub struct NodeRuntime {
@@ -70,16 +70,23 @@ impl NodeRuntime {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .with_context(|| format!("spawn {} -> {}", guard_bin.display(), worker_bin.display()))?;
+            .with_context(|| {
+                format!("spawn {} -> {}", guard_bin.display(), worker_bin.display())
+            })?;
 
-        wait_for_worker_health(&worker_url).await?;
+        wait_for_worker_health(&worker_health_url(&config.worker_host, config.worker_port)).await?;
 
         let http = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
             .context("build HTTP client")?;
 
-        let registration = register_or_reuse(&http, &coordinator_url, &config, &worker_url).await?;
+        let advertise_url = config
+            .worker_advertise_url
+            .clone()
+            .unwrap_or_else(|| worker_url.clone());
+        let registration =
+            register_or_reuse(&http, &coordinator_url, &config, &advertise_url).await?;
         config.node.node_id = Some(registration.node_id.clone());
         config.node.token = Some(registration.token.clone());
         save_config(&config)?;
@@ -214,7 +221,10 @@ pub async fn show_status(config: &NodeConfig) -> Result<()> {
     println!("YouAI Node status");
     println!("  name:          {}", config.name);
     println!("  coordinator:   {}", config.coordinator_url);
-    println!("  worker:        {}", worker_url(&config.worker_host, config.worker_port));
+    println!(
+        "  worker:        {}",
+        worker_url(&config.worker_host, config.worker_port)
+    );
     println!("  model:         {}", config.model.name);
     println!(
         "  resources:     cpu {}% · ram {}",
@@ -224,6 +234,9 @@ pub async fn show_status(config: &NodeConfig) -> Result<()> {
         "  registered:    {}",
         config.node.node_id.as_deref().unwrap_or("(not yet)")
     );
+    if let Some(rpc) = &config.rpc_url {
+        println!("  rpc_url:       {rpc}");
+    }
     println!(
         "  running:       {}",
         if worker_alive { "yes" } else { "no" }
@@ -246,14 +259,20 @@ pub async fn show_status(config: &NodeConfig) -> Result<()> {
         Ok(response) if response.status().is_success() => {
             let body: youai_common::NodesResponse = response.json().await?;
             let online = body.nodes.iter().filter(|n| n.online).count();
-            println!("  cluster:       {online}/{} nodes online", body.nodes.len());
+            println!(
+                "  cluster:       {online}/{} nodes online",
+                body.nodes.len()
+            );
             for node in body.nodes {
                 let mark = if node.online { "online" } else { "offline" };
                 println!("    - {} ({}) · {}", node.name, mark, node.worker_url);
             }
         }
         Ok(response) => {
-            println!("  cluster:       coordinator returned {}", response.status());
+            println!(
+                "  cluster:       coordinator returned {}",
+                response.status()
+            );
         }
         Err(err) => {
             println!("  cluster:       unreachable ({err})");
@@ -307,6 +326,10 @@ async fn register_or_reuse(
             region: config.region.clone(),
             worker_url: worker_url.to_string(),
             model: config.model.name.clone(),
+            shard_group: config.shard.group.clone(),
+            shard_stage: config.shard.stage,
+            shard_total_stages: config.shard.total_stages,
+            rpc_url: config.rpc_url.clone().unwrap_or_default(),
         })
         .send()
         .await

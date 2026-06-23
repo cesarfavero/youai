@@ -12,6 +12,7 @@ pub struct InferenceConfig {
     pub prompt: String,
     pub max_tokens: u32,
     pub timeout: Duration,
+    pub rpc_servers: Vec<String>,
 }
 
 pub fn run_inference(config: &InferenceConfig) -> Result<String> {
@@ -29,30 +30,36 @@ pub fn run_inference(config: &InferenceConfig) -> Result<String> {
         binary = %config.llama_cli.display(),
         model = %config.model_path.display(),
         max_tokens = config.max_tokens,
+        rpc_servers = ?config.rpc_servers,
         "running llama.cpp inference"
     );
 
     let mut cmd = Command::new(&config.llama_cli);
     cmd.args([
         "-m",
-        config.model_path.to_str().context("model path is not UTF-8")?,
+        config
+            .model_path
+            .to_str()
+            .context("model path is not UTF-8")?,
         "-p",
         &config.prompt,
         "-n",
         &config.max_tokens.to_string(),
         "--temp",
         "0.7",
-    ])
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::null());
+    ]);
+    if !config.rpc_servers.is_empty() {
+        cmd.arg("--rpc").arg(config.rpc_servers.join(","));
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
 
     let child = cmd
         .spawn()
         .with_context(|| format!("spawn {}", config.llama_cli.display()))?;
 
-    let output = wait_with_timeout(child, config.timeout)
-        .context("llama.cpp execution failed")?;
+    let output = wait_with_timeout(child, config.timeout).context("llama.cpp execution failed")?;
 
     if !output.status.success() {
         bail!("llama.cpp exited with {}", output.status);
@@ -73,9 +80,7 @@ fn wait_with_timeout(
     loop {
         match child.try_wait().context("wait on llama.cpp")? {
             Some(_) => {
-                return child
-                    .wait_with_output()
-                    .context("collect llama.cpp output");
+                return child.wait_with_output().context("collect llama.cpp output");
             }
             None if started.elapsed() >= timeout => {
                 let _ = child.kill();
@@ -95,9 +100,7 @@ fn extract_response_text(stdout: &[u8]) -> String {
             .lines()
             .map(str::trim)
             .take_while(|line| {
-                !line.starts_with('>')
-                    && !line.eq_ignore_ascii_case("user")
-                    && !line.is_empty()
+                !line.starts_with('>') && !line.eq_ignore_ascii_case("user") && !line.is_empty()
             })
             .collect::<Vec<_>>()
             .join(" ")
