@@ -3,6 +3,7 @@
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use youai_common::chat_template::CHAT_TEMPLATE_VERSION;
 use youai_common::ChatResponse;
 
 const DEFAULT_MAX_ENTRIES: usize = 500;
@@ -42,6 +43,8 @@ impl ResponseCache {
         hasher.update(tier.as_bytes());
         hasher.update(b"|");
         hasher.update(mode.as_bytes());
+        hasher.update(b"|");
+        hasher.update(CHAT_TEMPLATE_VERSION.to_le_bytes());
         hex::encode(hasher.finalize())
     }
 

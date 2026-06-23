@@ -44,12 +44,18 @@ pub fn run_inference(config: &InferenceConfig) -> Result<String> {
     cmd.args([
         "-m",
         model_path.to_str().context("model path is not UTF-8")?,
+        "--chat-template",
+        "chatml",
+        "-sys",
+        youai_common::chat_template::SMOLLM2_SYSTEM,
         "-p",
         &config.prompt,
         "-n",
         &config.max_tokens.to_string(),
         "--temp",
-        "0.7",
+        "0.3",
+        "-r",
+        "<|im_end|>",
     ]);
     if !config.rpc_servers.is_empty() {
         cmd.arg("--rpc").arg(config.rpc_servers.join(","));
@@ -68,7 +74,9 @@ pub fn run_inference(config: &InferenceConfig) -> Result<String> {
         bail!("llama.cpp exited with {}", output.status);
     }
 
-    let text = extract_response_text(&output.stdout);
+    let text = youai_common::chat_template::clean_assistant_response(&extract_response_text(
+        &output.stdout,
+    ));
     if text.is_empty() {
         warn!("llama.cpp returned empty text");
     }

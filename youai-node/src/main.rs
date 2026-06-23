@@ -1,5 +1,6 @@
 //! YouAI Node CLI — config, start, pause, status for contributor nodes.
 
+mod registry_verify;
 mod runtime;
 
 use anyhow::{Context, Result};

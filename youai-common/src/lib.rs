@@ -1,5 +1,6 @@
 //! Shared types, defaults, and config paths for the YouAI workspace.
 
+pub mod chat_template;
 pub mod compute;
 pub mod signing;
 

@@ -1,5 +1,7 @@
 use crate::auth::{self, NonceStore};
 use crate::cache::ResponseCache;
+use crate::gateway;
+use crate::priority;
 use crate::db::{Database, StoredNode};
 use crate::pipeline::{run_pipeline, worker_is_healthy};
 use crate::registry::{load_manifest, resolve_manifest_path, select_active_tier, RegistryManifest};
@@ -22,6 +24,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{info, warn};
 use uuid::Uuid;
 use youai_common::{
+    chat_template::clean_assistant_response,
     compute::node_compute_units, signing, ChatRequest, ChatResponse, ChatRoutingMode,
     HeartbeatRequest, InferRequest, InferResponse, NetworkComputeResponse, NodesResponse,
     PruneNodesResponse, RegisterNodeRequest, RegisterNodeResponse, RegistryTierResponse,
@@ -90,6 +93,9 @@ pub async fn serve(host: &str, port: u16, db_path: &str) -> Result<()> {
         .route("/api/v1/registry/manifest", get(registry_manifest))
         .route("/api/v1/registry/tier", get(registry_tier))
         .route("/api/v1/network/compute", get(network_compute))
+        .route("/api/v1/gateway/upload", post(gateway::upload_not_ready))
+        .route("/api/v1/gateway/url", post(gateway::url_not_ready))
+        .route("/api/v1/gateway/search", post(gateway::search_not_ready))
         .route("/api/v1/chat", post(chat))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
@@ -336,8 +342,10 @@ async fn chat(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<ChatResponse>, AppError> {
-    let (chat_body, contributor, priority_label, active_tier) =
+    let (chat_body, contributor, priority_label, active_tier, contributor_score) =
         parse_chat_request(&state, &headers, &body)?;
+
+    let _wait = priority::apply_chat_priority(contributor, contributor_score).await;
 
     if chat_body.prompt.trim().is_empty() {
         return Err(AppError::bad_request("prompt is required"));
@@ -411,19 +419,33 @@ async fn chat(
         .await?
     };
 
+    let mut final_resp = response.0;
+    final_resp.text = clean_assistant_response(&final_resp.text);
+
     if let Ok(mut cache) = state.cache.lock() {
-        cache.put(cache_key, response.0.clone(), contributor);
+        cache.put(cache_key, final_resp.clone(), contributor);
     }
 
-    Ok(response)
+    Ok(Json(final_resp))
 }
 
 fn parse_chat_request(
     state: &AppState,
     headers: &HeaderMap,
     body: &Bytes,
-) -> Result<(ChatRequest, bool, String, String), AppError> {
+) -> Result<(ChatRequest, bool, String, String, f64), AppError> {
     let (_, _, _, tier_sel) = network_snapshot(state)?;
+    let contributor_score = headers
+        .get(TOKEN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|token| {
+            state
+                .db
+                .lock()
+                .ok()
+                .and_then(|db| db.contributor_score_for_token(token).ok())
+        })
+        .unwrap_or(0.0);
 
     if let Ok(envelope) = serde_json::from_slice::<SignedChatRequest>(body) {
         let verified = {
@@ -445,7 +467,13 @@ fn parse_chat_request(
         } else {
             "standard".to_string()
         };
-        return Ok((envelope.body, verified.contributor, priority, tier_sel.active_tier));
+        return Ok((
+            envelope.body,
+            verified.contributor,
+            priority,
+            tier_sel.active_tier,
+            contributor_score,
+        ));
     }
 
     if let Ok(plain) = serde_json::from_slice::<ChatRequest>(body) {
@@ -460,14 +488,20 @@ fn parse_chat_request(
                     } else {
                         "contributor".to_string()
                     };
-                    return Ok((plain, true, priority, tier_sel.active_tier));
+                    return Ok((plain, true, priority, tier_sel.active_tier, score));
                 }
             }
             return Err(AppError::unauthorized(
                 "signed chat envelope or contributor token required",
             ));
         }
-        return Ok((plain, false, "dev".to_string(), tier_sel.active_tier));
+        return Ok((
+            plain,
+            false,
+            "dev".to_string(),
+            tier_sel.active_tier,
+            contributor_score,
+        ));
     }
 
     Err(AppError::bad_request("invalid chat request body"))

@@ -4,7 +4,9 @@ mod api;
 mod auth;
 mod cache;
 mod db;
+mod gateway;
 mod pipeline;
+mod priority;
 mod registry;
 
 use anyhow::Result;

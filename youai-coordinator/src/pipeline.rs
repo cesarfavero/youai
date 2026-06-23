@@ -6,6 +6,7 @@ use tokio::net::TcpStream;
 use tracing::warn;
 use uuid::Uuid;
 use youai_common::{
+    chat_template::{clean_assistant_response, format_instruct_prompt, is_eos_piece},
     ChatStageInfo, InferRequest, InferResponse, PipelineStepRequest, PipelineStepResponse,
     RemoteShardSource, PIPELINE_KIND_ACTIVATION,
 };
@@ -174,6 +175,7 @@ async fn run_pipeline_activation(
     let session_id = Uuid::new_v4().to_string();
     let head = &stages[0];
     let tail = &stages[1];
+    let instruct_prompt = format_instruct_prompt(&head.model, user_prompt);
 
     let prefill = post_pipeline_step(
         client,
@@ -181,7 +183,7 @@ async fn run_pipeline_activation(
         &PipelineStepRequest {
             session_id: session_id.clone(),
             op: "prefill-prompt".to_string(),
-            prompt: user_prompt.to_string(),
+            prompt: instruct_prompt,
             token_id: 0,
             activation_b64: String::new(),
             sample: false,
@@ -215,11 +217,14 @@ async fn run_pipeline_activation(
             .token_id
             .ok_or_else(|| "tail stage produced no token_id".to_string())?;
         if let Some(piece) = sampled.text {
+            if is_eos_piece(&piece) {
+                break;
+            }
             generated.push_str(&piece);
             stage_texts[1].push_str(&piece);
         }
 
-        if token_idx + 1 >= max_tokens {
+        if is_eos_piece(&generated) || token_idx + 1 >= max_tokens {
             break;
         }
 
@@ -256,7 +261,7 @@ async fn run_pipeline_activation(
         .collect();
 
     Ok((
-        generated,
+        clean_assistant_response(&generated),
         stages_out,
         head.model.clone(),
         "pipeline_activation_v4",

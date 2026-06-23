@@ -34,6 +34,10 @@ impl NodeRuntime {
         let guard_bin = resolve_binary("youai-guard")?;
         let worker_bin = resolve_binary("youai-worker")?;
         let model_path = youai_common::resolve_model_path(&config)?;
+        crate::registry_verify::verify_model_against_manifest(
+            &model_path,
+            &config.model.name,
+        )?;
         let llama_cli = youai_common::resolve_llama_cli(&config)?;
         let worker_url = worker_url(&config.worker_host, config.worker_port);
         let coordinator_url = config.coordinator_url.clone();
