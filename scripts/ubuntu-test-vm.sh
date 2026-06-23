@@ -12,6 +12,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+YOUAI_MAC_HOME="${YOUAI_MAC_HOME:-$HOME}"
+YOUAI_MAC_DATA="${YOUAI_MAC_HOME}/.youai"
 # Repo is virtiofs-mounted from macOS — never use ROOT/target/release inside the VM
 # (those are Mach-O binaries). Build Linux artifacts in the VM home instead.
 VM_TARGET_DIR="${YOUAI_VM_TARGET_DIR:-\$HOME/.youai/cargo-target}"
@@ -104,8 +106,8 @@ fi
 
 mkdir -p "\$HOME/.youai/models"
 if [[ ! -f "\$HOME/.youai/models/smollm2-360m-instruct-q4_k_m.gguf" ]]; then
-  if [[ -f /Users/cesarfavero/.youai/models/smollm2-360m-instruct-q4_k_m.gguf ]]; then
-    ln -sf /Users/cesarfavero/.youai/models/smollm2-360m-instruct-q4_k_m.gguf "\$HOME/.youai/models/"
+  if [[ -f ${YOUAI_MAC_DATA}/models/smollm2-360m-instruct-q4_k_m.gguf ]]; then
+    ln -sf ${YOUAI_MAC_DATA}/models/smollm2-360m-instruct-q4_k_m.gguf "\$HOME/.youai/models/"
   else
     ${ROOT}/scripts/download-model.sh
   fi
@@ -130,7 +132,7 @@ export CARGO_TARGET_DIR=${VM_TARGET_DIR}
 export PATH=${VM_TARGET_DIR}/release:\$PATH
 export YOUAI_BIN_DIR=${VM_TARGET_DIR}/release
 mkdir -p "\$HOME/.youai/shards"
-MAC_SHARDS="/Users/cesarfavero/.youai/shards"
+MAC_SHARDS="${YOUAI_MAC_DATA}/shards"
 SHARD1="\$(ls "\$MAC_SHARDS"/*-00002-of-00002.gguf 2>/dev/null | head -1 || true)"
 if [[ -z "\$SHARD1" ]]; then
   echo "Mac GGUF shard 2 not found. Run: ./scripts/setup-pipeline-gguf-mac.sh" >&2
@@ -167,6 +169,61 @@ tail -5 /tmp/youai-node.log || true
 START
 }
 
+start_node_replica() {
+  bootstrap
+  ensure_worker_port_forward
+  echo "Starting youai-node (replica — full GGUF) in Colima Ubuntu..."
+  echo "  Coordinator (Mac): ${COORDINATOR_URL}"
+  echo "  Worker advertise: ${WORKER_ADVERTISE}"
+
+  colima_sh bash -s <<START
+set -euo pipefail
+export HOME="\${HOME:-/home/\$(whoami)}"
+source "\$HOME/.cargo/env"
+export CARGO_TARGET_DIR=${VM_TARGET_DIR}
+export PATH=${VM_TARGET_DIR}/release:\$PATH
+export YOUAI_BIN_DIR=${VM_TARGET_DIR}/release
+mkdir -p "\$HOME/.youai/models"
+MODEL="\$HOME/.youai/models/smollm2-360m-instruct-q4_k_m.gguf"
+if [[ ! -f "\$MODEL" ]]; then
+  MAC_MODEL="${YOUAI_MAC_DATA}/models/smollm2-360m-instruct-q4_k_m.gguf"
+  if [[ -f "\$MAC_MODEL" ]]; then
+    ln -sf "\$MAC_MODEL" "\$MODEL"
+  else
+    echo "Full model not found. Run on Mac: ./scripts/download-model.sh" >&2
+    exit 1
+  fi
+fi
+
+youai-node pause 2>/dev/null || true
+pkill -f 'youai-worker serve' 2>/dev/null || true
+pkill -f 'youai-guard' 2>/dev/null || true
+if [[ -f /tmp/youai-node.pid ]]; then rm -f /tmp/youai-node.pid; fi
+
+youai-node config \
+  --name ubuntu-colima \
+  --coordinator ${COORDINATOR_URL} \
+  --worker-host 0.0.0.0 \
+  --worker-port ${WORKER_PORT} \
+  --worker-advertise-url ${WORKER_ADVERTISE} \
+  --shard-group "" \
+  --shard-stage 0 \
+  --shard-total-stages 1 \
+  --gguf-shard-index 0 \
+  --gguf-shard-total 1 \
+  --pipeline-kind "" \
+  --clear-rpc-url \
+  --model-path "\$MODEL" \
+  --cpu-percent 30 \
+  --ram-max 2g
+
+nohup youai-node start > /tmp/youai-node.log 2>&1 &
+echo \$! > /tmp/youai-node.pid
+sleep 3
+tail -8 /tmp/youai-node.log || true
+START
+}
+
 start_node_activation() {
   bootstrap
   ensure_worker_port_forward
@@ -182,7 +239,7 @@ export CARGO_TARGET_DIR=${VM_TARGET_DIR}
 export PATH=${VM_TARGET_DIR}/release:\$PATH
 export YOUAI_BIN_DIR=${VM_TARGET_DIR}/release
 mkdir -p "\$HOME/.youai/pipeline-stages"
-MAC_STAGES="/Users/cesarfavero/.youai/pipeline-stages"
+MAC_STAGES="${YOUAI_MAC_DATA}/pipeline-stages"
 STAGE1="\$(ls "\$MAC_STAGES"/*-stage01-of-02.gguf 2>/dev/null | head -1 || true)"
 if [[ -z "\$STAGE1" ]]; then
   echo "Mac pipeline stage 1 GGUF not found. Run: ./scripts/setup-pipeline-activation-mac.sh" >&2
@@ -335,13 +392,14 @@ case "${cmd}" in
   start-node) start_node ;;
   start-node-gguf) start_node_gguf ;;
   start-node-activation) start_node_activation ;;
+  start-node-replica) start_node_replica ;;
   status) status ;;
   logs) logs ;;
   pause) pause_node ;;
   destroy) destroy ;;
   -h|--help)
     cat <<EOF
-Usage: $0 {create|start-node|start-node-gguf|start-node-activation|status|logs|shell|pause|destroy}
+Usage: $0 {create|start-node|start-node-gguf|start-node-activation|start-node-replica|status|logs|shell|pause|destroy}
 
 Prereq: brew install colima lima && colima start
 
