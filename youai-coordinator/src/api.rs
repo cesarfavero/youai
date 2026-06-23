@@ -396,7 +396,9 @@ async fn chat(
     };
 
     let want_pipeline = matches!(chat_body.mode, ChatRoutingMode::Pipeline)
-        || (chat_body.mode == ChatRoutingMode::Auto && pipeline_chain.is_some());
+        || (chat_body.mode == ChatRoutingMode::Auto
+            && youai_common::resolve_auto_chat_dispatch(pipeline_chain.is_some())
+                == youai_common::AutoChatDispatch::Pipeline);
 
     let response = if want_pipeline {
         let pipeline = pipeline_chain.ok_or_else(|| {
@@ -556,7 +558,25 @@ async fn chat_replica(
     active_tier: &str,
     priority: &str,
 ) -> Result<Json<ChatResponse>, AppError> {
-    let mut ordered: Vec<&StoredNode> = nodes.iter().collect();
+    let eligible: Vec<&StoredNode> = nodes
+        .iter()
+        .filter(|node| {
+            youai_common::is_replica_eligible(
+                node.shard_total_stages,
+                node.gguf_shard_total,
+                &node.pipeline_kind,
+            )
+        })
+        .collect();
+
+    if eligible.is_empty() {
+        return Err(AppError::service_unavailable(
+            "no replica-capable nodes online — pipeline stage shards cannot serve replica chat; \
+             configure a node with the full GGUF model (see scripts/setup-replica-mac.sh)",
+        ));
+    }
+
+    let mut ordered: Vec<&StoredNode> = eligible;
     if contributor {
         ordered.sort_by(|a, b| {
             b.contributor_score

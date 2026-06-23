@@ -393,6 +393,40 @@ pub fn worker_health_url(host: &str, port: u16) -> String {
     format!("http://{}:{port}", worker_local_health_host(host))
 }
 
+/// True when the node loads a complete model suitable for standalone `/infer` (replica chat).
+pub fn is_replica_eligible(
+    shard_total_stages: u8,
+    gguf_shard_total: u16,
+    pipeline_kind: &str,
+) -> bool {
+    if shard_total_stages > 1 {
+        return false;
+    }
+    if gguf_shard_total > 1 {
+        return false;
+    }
+    if pipeline_kind == PIPELINE_KIND_ACTIVATION {
+        return false;
+    }
+    true
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoChatDispatch {
+    Replica,
+    Pipeline,
+}
+
+/// Auto mode: pipeline when a full shard chain is online (one model, many PCs);
+/// else replica on whatever standalone workers are available.
+pub fn resolve_auto_chat_dispatch(pipeline_chain_available: bool) -> AutoChatDispatch {
+    if pipeline_chain_available {
+        AutoChatDispatch::Pipeline
+    } else {
+        AutoChatDispatch::Replica
+    }
+}
+
 // --- Coordinator API types ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -709,6 +743,26 @@ mod tests {
         let raw = toml::to_string(&config).unwrap();
         let parsed: NodeConfig = toml::from_str(&raw).unwrap();
         assert_eq!(parsed.model.name, DEFAULT_MODEL_NAME);
+    }
+
+    #[test]
+    fn auto_prefers_pipeline_when_chain_online() {
+        assert_eq!(
+            resolve_auto_chat_dispatch(true),
+            AutoChatDispatch::Pipeline
+        );
+        assert_eq!(
+            resolve_auto_chat_dispatch(false),
+            AutoChatDispatch::Replica
+        );
+    }
+
+    #[test]
+    fn replica_eligible_only_for_standalone_full_gguf() {
+        assert!(is_replica_eligible(1, 1, ""));
+        assert!(!is_replica_eligible(2, 1, ""));
+        assert!(!is_replica_eligible(1, 2, ""));
+        assert!(!is_replica_eligible(1, 1, PIPELINE_KIND_ACTIVATION));
     }
 
     #[test]
