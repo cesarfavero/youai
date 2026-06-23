@@ -137,9 +137,40 @@ Integration tests for guard **must** verify that resource limits are enforced (s
 
 ## Security
 
-- Read [SECURITY.md](./SECURITY.md) before touching guard, sandbox, or network code
+- Read [SECURITY.md](./SECURITY.md) (disclosure) and [SECURITY_MODEL.md](./SECURITY_MODEL.md) (design completo) before touching guard, sandbox, or network code
 - Never commit API keys, tokens, or model files (`.gguf`)
 - Report vulnerabilities privately — do not open public issues
+- Model downloads must reference [registry/manifest.json](../registry/manifest.json) with SHA256 — never ad-hoc URLs in code
+
+### Pull request policy
+
+| Rule | Detail |
+|------|--------|
+| Issues | Open to the community |
+| Pull requests | **Human review required** — no auto-merge on sensitive paths |
+| Sensitive paths | `youai-guard`, `youai-worker`, `youai-node`, `youai-coordinator`, `native/`, deploy `scripts/` |
+
+### Security checklist (required in PR description)
+
+Copy into every PR that touches guard, worker, node, coordinator, `native/`, or registry:
+
+```markdown
+## Security checklist
+- [ ] Não lê filesystem fora de ~/.youai/
+- [ ] Não executa código/binários recebidos da rede
+- [ ] Não abre portas inbound novas
+- [ ] Não loga prompt ou PII em claro
+- [ ] Limites guard/cpu/ram respeitados ou documentada excepção
+- [ ] Novos downloads só via Model Registry (hash)
+- [ ] Documentação actualizada (README ou docs/)
+- [ ] Testes passam (cargo test, clippy)
+```
+
+PRs that fail critical items are **not merged** until fixed.
+
+### Transparency rule
+
+If user-visible behavior is not documented in `README.md` or `docs/`, treat it as a documentation bug and update docs in the same PR.
 
 ## License
 

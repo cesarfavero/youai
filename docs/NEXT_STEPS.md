@@ -17,9 +17,15 @@ youai/
     └── NEXT_STEPS.md   ← você está aqui
 ```
 
-**Fase atual:** dogfood multi-máquina — réplica + **pipeline v1–v4** ✅  
-**Meta imediata:** qualidade (chat template, EOS) + **v5** (3+ stages, activações comprimidas)  
-**Meta MVP:** 10–50 PCs · Nex-N2-mini · chat free · crédito básico
+**Fase atual:** dogfood multi-máquina — réplica + **pipeline v1–v4** ✅ · **Model Registry** tier1 em `registry/manifest.json` ✅  
+**Meta imediata:** registry API no coordinator + SHA256 no node + qualidade (chat template, EOS)  
+**Meta MVP:** 10–50 PCs · tier1 Spark (SmolLM2-360M) no Mac Mini · chat free · crédito básico
+
+**Design docs normativos (ler antes de features novas):**
+
+- [MODEL_TIERS.md](./MODEL_TIERS.md) — tiers, registry, rollout, early access
+- [SECURITY_MODEL.md](./SECURITY_MODEL.md) — sandbox, E2E, PR checklist, background
+- [PRODUCT.md](./PRODUCT.md) — app ChatGPT/Codex-like, onboarding, transparência
 
 ---
 
@@ -253,6 +259,45 @@ youai-coordinator --port 8080
 ./scripts/test-shard-pipeline-activation.sh   # v4
 ```
 
+## Passo 8b — Model Registry e tiers (prioridade agora)
+
+**Objectivo:** gerir modelos centralmente — tier1 no Mac Mini hoje; subir tier quando a rede aguenta.
+
+**Já feito:**
+
+- [x] `registry/manifest.json` — tier1 Spark (SmolLM2-360M Q4_K_M + pipeline stages + SHA256)
+- [x] Docs: [MODEL_TIERS.md](./MODEL_TIERS.md), [PRODUCT.md](./PRODUCT.md), [SECURITY_MODEL.md](./SECURITY_MODEL.md)
+- [x] README como índice central
+
+**Próximo (pedir no Cursor):**
+
+- [ ] `GET /api/v1/registry/manifest` e `GET /api/v1/registry/tier` no coordinator (estático a partir do JSON)
+- [ ] Verificação SHA256 em `youai-node start` antes de carregar modelo
+- [ ] `youai-node models status` / `models update` / `tier`
+- [ ] Métricas de rede → `tier_ativo` automático (com histerese)
+- [ ] Canary rollout + `contributor_score` para early access
+- [ ] Assinatura Ed25519 no manifest
+
+**Referência:** [MODEL_TIERS.md](./MODEL_TIERS.md) · [registry/manifest.json](../registry/manifest.json)
+
+---
+
+## Passo 8c — App desktop + onboarding (fase beta)
+
+**Objectivo:** app tipo ChatGPT/Codex com contribuição automática mas transparente.
+
+**Escopo:**
+
+- [ ] Shell desktop (Tauri ou Electron) com `youai-node` embutido
+- [ ] Onboarding: opt-in explícito, sliders CPU/RAM, download registry
+- [ ] Bandeja: ícone verde/amarelo, pausa em 1 clique
+- [ ] Ecrãs: Chat, Contribuir, Rede (tier + progresso), Privacidade
+- [ ] E2E antes de beta pública
+
+**Referência:** [PRODUCT.md](./PRODUCT.md) · [SECURITY_MODEL.md](./SECURITY_MODEL.md)
+
+---
+
 ### Pipeline v5 — escala e qualidade
 
 **Objetivo:** pipeline útil em produção (texto coerente, 3+ máquinas, latência aceitável).
@@ -405,9 +450,13 @@ O MVP está pronto quando **todos** forem verdade:
 
 ## Links rápidos internos
 
-- [Pipeline distribuído (v1 RPC)](./PIPELINE.md)
+- [README (índice central)](../README.md)
+- [Model Tiers & Registry](./MODEL_TIERS.md)
+- [Modelo de Segurança](./SECURITY_MODEL.md)
+- [Produto & App](./PRODUCT.md)
+- [Pipeline distribuído (v1–v4)](./PIPELINE.md)
+- [Manifest tier1](../registry/manifest.json)
 - [Visão e arquitetura](./MVP.md)
-- [README do projeto](../README.md)
 
 ---
 

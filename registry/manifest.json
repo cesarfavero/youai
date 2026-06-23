@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "issued_at": "2026-06-23T00:00:00Z",
+  "signature": null,
+  "default_tier": "tier1",
+  "tiers": {
+    "tier0": {
+      "id": "tier0",
+      "display_name": "YouAI Lab",
+      "description": "Desenvolvimento local — 1 nó, sem requisitos de rede",
+      "models": [
+        {
+          "id": "smollm2-360m-instruct-q4_k_m",
+          "filename": "smollm2-360m-instruct-q4_k_m.gguf",
+          "url": "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf",
+          "sha256": "2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2",
+          "size_bytes": 270590880,
+          "pipeline": {
+            "kind": "replica",
+            "stages": 1
+          },
+          "runtime": {
+            "ram_min_mb": 512,
+            "ram_recommended_mb": 1024,
+            "cpu_percent_default": 30,
+            "gpu_required": false
+          }
+        }
+      ],
+      "network_requirements": {
+        "min_contributors_online": 1,
+        "min_total_ram_gb": 1,
+        "min_pipeline_chains": 0
+      },
+      "features": ["chat", "dev"]
+    },
+    "tier1": {
+      "id": "tier1",
+      "display_name": "YouAI Spark",
+      "description": "Leve — Mac Mini, laptops, contribuição em background",
+      "models": [
+        {
+          "id": "smollm2-360m-instruct-q4_k_m",
+          "filename": "smollm2-360m-instruct-q4_k_m.gguf",
+          "url": "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf",
+          "sha256": "2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2",
+          "size_bytes": 270590880,
+          "pipeline": {
+            "kind": "activation",
+            "stages": 2,
+            "stage_files": [
+              {
+                "filename": "smollm2-360m-instruct-q4_k_m-stage00-of-02.gguf",
+                "sha256": "9d186b6e6b5aadc1ffc8bc1c3458f6bd36745b7c237f7b1839d79ff2dd8549a7",
+                "size_bytes": 163496192,
+                "stage_index": 0,
+                "generated_by": "scripts/split-model-layers.py"
+              },
+              {
+                "filename": "smollm2-360m-instruct-q4_k_m-stage01-of-02.gguf",
+                "sha256": "7a96c5558be732a837aef38d72cc45b681bfba00335c7ca447a78bd8831c9cce",
+                "size_bytes": 159003392,
+                "stage_index": 1,
+                "generated_by": "scripts/split-model-layers.py"
+              }
+            ]
+          },
+          "runtime": {
+            "ram_min_mb": 512,
+            "ram_recommended_mb": 1024,
+            "cpu_percent_default": 30,
+            "gpu_required": false
+          }
+        }
+      ],
+      "network_requirements": {
+        "min_contributors_online": 2,
+        "min_total_ram_gb": 4,
+        "min_pipeline_chains": 1
+      },
+      "features": ["chat", "pipeline_v4"]
+    },
+    "tier2": {
+      "id": "tier2",
+      "display_name": "YouAI Glow",
+      "description": "Modelo maior — requer mais contribuintes e RAM",
+      "models": [],
+      "network_requirements": {
+        "min_contributors_online": 10,
+        "min_total_ram_gb": 20,
+        "min_pipeline_chains": 2
+      },
+      "features": ["chat", "pipeline_v4", "long_context"],
+      "status": "planned"
+    },
+    "tier3": {
+      "id": "tier3",
+      "display_name": "YouAI Beam",
+      "description": "Classe 3B — tools via gateway",
+      "models": [],
+      "network_requirements": {
+        "min_contributors_online": 100,
+        "min_total_ram_gb": 200,
+        "min_pipeline_chains": 4
+      },
+      "features": ["chat", "pipeline_v4", "tools_gateway"],
+      "status": "planned"
+    },
+    "tier4": {
+      "id": "tier4",
+      "display_name": "YouAI Arc",
+      "description": "7B sharded — upload leitura no gateway",
+      "models": [],
+      "network_requirements": {
+        "min_contributors_online": 1000,
+        "min_total_ram_gb": 2000,
+        "min_pipeline_chains": 8
+      },
+      "features": ["chat", "pipeline_v4", "upload_gateway"],
+      "status": "planned"
+    },
+    "tier5": {
+      "id": "tier5",
+      "display_name": "YouAI Horizon",
+      "description": "7B+ / MoE parcial — URL e busca no gateway",
+      "models": [],
+      "network_requirements": {
+        "min_contributors_online": 10000,
+        "min_total_ram_gb": 20000,
+        "min_pipeline_chains": 16
+      },
+      "features": ["chat", "pipeline_v4", "upload_gateway", "url_gateway", "search_gateway"],
+      "status": "planned"
+    }
+  }
+}

@@ -44,6 +44,9 @@ We will not take legal action against researchers who follow this policy in good
 
 ## Security Model
 
+> **Design completo (normativo):** [SECURITY_MODEL.md](./SECURITY_MODEL.md) — sandbox, E2E roadmap, threat model, checklist de PR, background, Model Registry.  
+> Este ficheiro cobre disclosure e resumo; implementação e revisão de código devem seguir SECURITY_MODEL.md.
+
 ### What a YouAI node **cannot** do
 
 These constraints are enforced by design and must hold in every release:
@@ -54,6 +57,7 @@ These constraints are enforced by design and must hold in every release:
 | Read files outside `~/.youai/` | Sandbox + filesystem isolation |
 | Open arbitrary inbound ports | Outbound-only connections to coordinator |
 | Install unsigned binaries | Verified releases with published build hashes |
+| Download models outside Model Registry | [`registry/manifest.json`](../registry/manifest.json) + SHA256 verify (planned in node) |
 | Exceed user-configured resource limits | Independent `youai-guard` with hard caps |
 
 ### What a YouAI node **can** do (with explicit opt-in)
