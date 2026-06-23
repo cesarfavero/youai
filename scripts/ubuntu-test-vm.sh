@@ -270,9 +270,10 @@ youai-node config \
   --gguf-shard-total 1 \
   --clear-rpc-url \
   --model-path "\$STAGE_VM" \
-  --cpu-percent 30 \
-  --ram-max 2g
+  --cpu-percent 80 \
+  --ram-max 4g
 
+export YOUAI_PIPELINE_DAEMON=1
 nohup youai-node start > /tmp/youai-node.log 2>&1 &
 echo \$! > /tmp/youai-node.pid
 sleep 2

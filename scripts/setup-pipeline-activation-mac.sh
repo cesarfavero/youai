@@ -29,8 +29,8 @@ pkill -f 'youai-guard.*7741' 2>/dev/null || true
   --gguf-shard-total 1 \
   --clear-rpc-url \
   --model-path "${STAGE0}" \
-  --cpu-percent 30 \
-  --ram-max 2g
+  --cpu-percent 80 \
+  --ram-max 4g
 
 export YOUAI_BIN_DIR="${ROOT}/target/release"
 

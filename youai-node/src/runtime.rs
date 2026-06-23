@@ -218,6 +218,13 @@ fn spawn_worker_child(config: &NodeConfig, model_path: &std::path::Path) -> Resu
         .stderr(Stdio::piped());
     if let Ok(dir) = std::env::var("YOUAI_BIN_DIR") {
         worker_cmd.env("YOUAI_BIN_DIR", dir);
+    } else if let Ok(worker_bin) = resolve_binary("youai-worker") {
+        if let Some(dir) = worker_bin.parent() {
+            worker_cmd.env("YOUAI_BIN_DIR", dir);
+        }
+    }
+    if config.shard.pipeline_kind == PIPELINE_KIND_ACTIVATION {
+        worker_cmd.env("YOUAI_PIPELINE_DAEMON", "1");
     }
     worker_cmd
         .spawn()
