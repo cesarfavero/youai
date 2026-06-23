@@ -16,7 +16,7 @@ echo "== nodes (expect pipeline_kind=activation, stages 0+1) =="
 curl -fsS "${COORDINATOR_URL}/api/v1/nodes" | python3 -m json.tool
 echo ""
 
-echo "== pipeline chat (mode=pipeline, expects mode=pipeline_activation) =="
+echo "== pipeline chat (mode=pipeline, expects mode=pipeline_activation_v4) =="
 curl -fsS \
   -H 'Content-Type: application/json' \
   -d "{\"prompt\":\"${PROMPT}\",\"max_tokens\":8,\"mode\":\"pipeline\"}" \

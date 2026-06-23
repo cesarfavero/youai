@@ -2,6 +2,7 @@
 
 pub mod llama;
 pub mod pipeline;
+pub mod pipeline_daemon;
 pub mod server;
 pub mod shards;
 

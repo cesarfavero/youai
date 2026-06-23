@@ -2,6 +2,7 @@ use crate::llama::{default_timeout, run_inference, InferenceConfig};
 use crate::pipeline::{
     default_pipeline_step_bin, default_session_root, run_pipeline_step, PipelineStepConfig,
 };
+use crate::pipeline_daemon::PipelineDaemon;
 use anyhow::{Context, Result};
 use axum::{
     body::Body,
@@ -27,6 +28,7 @@ pub struct WorkerState {
     pub llama_cli: PathBuf,
     pub model_path: PathBuf,
     pub model_name: String,
+    pub pipeline_daemon: Arc<std::sync::Mutex<Option<PipelineDaemon>>>,
 }
 
 pub async fn serve(host: &str, port: u16, state: WorkerState) -> Result<()> {
@@ -112,8 +114,15 @@ async fn pipeline_step(
         session_root: default_session_root(),
         timeout: default_timeout(),
     };
+    let daemon_slot = state.pipeline_daemon.clone();
 
-    let result = tokio::task::spawn_blocking(move || run_pipeline_step(&config, &body)).await;
+    let result = tokio::task::spawn_blocking(move || {
+        let mut daemon = daemon_slot
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pipeline daemon lock poisoned"))?;
+        run_pipeline_step(&config, &body, &mut daemon)
+    })
+    .await;
 
     match result {
         Ok(Ok(outcome)) => (

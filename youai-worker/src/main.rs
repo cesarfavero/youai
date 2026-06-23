@@ -141,6 +141,7 @@ async fn exec_serve(
             llama_cli,
             model_path,
             model_name,
+            pipeline_daemon: std::sync::Arc::new(std::sync::Mutex::new(None)),
         },
     )
     .await

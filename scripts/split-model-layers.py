@@ -77,6 +77,8 @@ def write_stage(
             new_name = rename_block(name, layer_lo)
         elif name == "output_norm.weight":
             keep = True
+        elif include_output and name == "output.weight":
+            keep = True
 
         if not keep:
             continue

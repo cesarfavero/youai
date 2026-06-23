@@ -89,21 +89,28 @@ youai-node → guard → youai-worker → llama-completion
 User ← coordinator
 ```
 
-### Pipeline v1 (RPC tensor split)
+### Pipeline (multi-máquina)
 
-Um pedido, uma inferência no stage 0; tensores offload para `rpc-server` nos stages 1+.
+O coordinator resolve a cadeia `default-pipeline` (stages 0..N-1) e escolhe o backend:
+
+| Backend | Modo | Resumo |
+|---------|------|--------|
+| RPC v1 | `pipeline_rpc` | Um `POST /infer` no head + `--rpc` |
+| GGUF v2 | `pipeline_gguf` | Stage 0 fetch shards HTTP + infer local |
+| Activation v4 | `pipeline_activation_v4` | Coordinator encadeia `POST /pipeline/step` com activações base64 |
 
 ```
 POST /api/v1/chat  mode=pipeline|auto
         │
         ▼
-youai-coordinator (resolve_pipeline → stages 0..N-1)
+youai-coordinator (resolve_pipeline → detect_backend)
         │
-        ▼ POST /infer  rpc_servers=[stage1.rpc_url, ...]
-stage 0 worker (llama-completion --rpc host:port)
-        │
-        ├── local Metal/CPU
-        └── TCP → rpc-server (stage 1+)  [GGML tensors na rede]
+        ├── v1: POST /infer + rpc_servers
+        ├── v2: POST /infer + remote_shards
+        └── v4: POST /pipeline/step (prefill → forward → decode loop)
+                    │
+                    ▼
+              youai-pipeline-step --daemon  (modelo quente no worker)
 ```
 
 Ver [PIPELINE.md](./PIPELINE.md) para setup e troubleshooting.
@@ -112,7 +119,7 @@ Ver [PIPELINE.md](./PIPELINE.md) para setup e troubleshooting.
 
 | Feature | MVP (phase 1) | Later |
 |---------|---------------|-------|
-| Routing | Replica round-robin + pipeline RPC v1 | MoE expert sharding · GGUF por camadas (v2) |
+| Routing | Replica + pipeline v1–v4 | MoE expert sharding · 3+ stages · activações comprimidas (v5) |
 | Models | Nex-N2-mini | N2-Pro, GLM-5.2 |
 | Mobile | — | Phase 4 |
 | GPU guard | Basic / NVML | Full thermal + pause |

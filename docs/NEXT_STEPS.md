@@ -17,8 +17,8 @@ youai/
     └── NEXT_STEPS.md   ← você está aqui
 ```
 
-**Fase atual:** dogfood multi-máquina — réplica + **pipeline v1 (RPC)** ✅  
-**Meta imediata:** **pipeline v2** — GGUF partido por camadas (`llama-gguf-split`)  
+**Fase atual:** dogfood multi-máquina — réplica + **pipeline v1–v4** ✅  
+**Meta imediata:** qualidade (chat template, EOS) + **v5** (3+ stages, activações comprimidas)  
 **Meta MVP:** 10–50 PCs · Nex-N2-mini · chat free · crédito básico
 
 ---
@@ -234,33 +234,40 @@ youai-coordinator --port 8080
 
 ---
 
-## Passo 8 — Sharding / pipeline (MVP rede) ✅ parcial
+## Passo 8 — Sharding / pipeline (MVP rede) ✅
 
 **Feito:**
 
 - [x] **Réplica** — round-robin com health check (`mode=replica` ou `auto`)
-- [x] **Pipeline v1** — split de tensores via llama.cpp RPC (`docs/PIPELINE.md`)
-- [x] Teste Mac + Colima: `./scripts/test-shard-pipeline.sh`
+- [x] **Pipeline v1** — RPC tensor split (`mode=pipeline_rpc`)
+- [x] **Pipeline v2** — GGUF distribuído (`mode=pipeline_gguf`)
+- [x] **Pipeline v3** — activações entre layer-splits (`youai-pipeline-step`)
+- [x] **Pipeline v4** — daemon com modelo quente (`--daemon`, `mode=pipeline_activation_v4`)
+- [x] Docs: [PIPELINE.md](./PIPELINE.md)
 
-**Critério de sucesso (réplica):** chat usa nó B se nó A cair. ✅  
-**Critério de sucesso (pipeline v1):** um pedido usa Mac + VM com `--rpc`. ✅
+**Testes:**
 
-### Pipeline v2 — GGUF por camadas
+```bash
+./scripts/test-shard-pipeline.sh              # v1
+./scripts/test-shard-pipeline-gguf.sh         # v2
+./scripts/test-shard-pipeline-activation.sh   # v4
+```
 
-**Objetivo:** cada nó carrega **só as camadas** que lhe cabem — ficheiros GGUF separados, activações entre estágios (não só offload por memória).
+### Pipeline v5 — escala e qualidade
 
-**Pedir no Cursor:**
-> "Implementa pipeline v2: llama-gguf-split por camadas, stage N carrega shard-N.gguf, coordinator encadeia activações entre workers"
+**Objetivo:** pipeline útil em produção (texto coerente, 3+ máquinas, latência aceitável).
 
-**Escopo mínimo v2:**
+**Escopo sugerido:**
 
-- [ ] Script `split-model.sh` — `llama-gguf-split` para 2 shards
-- [ ] `NodeConfig` / registo: `layer_start`, `layer_end` ou path do shard
-- [ ] Worker: carregar só o GGUF do estágio (sem modelo completo)
-- [ ] Coordinator: pipeline encadeado (stage 0 → 1 → …) com tensores de activação
-- [ ] Teste 2 máquinas com modelo maior que 1 nó sozinho
+- [ ] Chat template SmolLM2 no `prefill-prompt` (coordinator ou worker)
+- [ ] Paragem em token EOS (`<|im_end|>`)
+- [ ] 3+ stages: `forward-activation` exporta activação nos intermediários
+- [ ] Compressão de activações (fp16 ou zstd) no coordinator
+- [ ] Fila / timeout dedicado para `mode=pipeline` (requests lentos)
+- [ ] UI web: mostrar `mode` + `stages` na resposta do chat
+- [ ] Modelo maior que 1 máquina (validar com 4 stages)
 
-**Referência:** [PIPELINE.md](./PIPELINE.md) · llama.cpp `tools/gguf-split`
+**Referência:** [PIPELINE.md](./PIPELINE.md)
 
 ---
 

@@ -259,7 +259,7 @@ async fn run_pipeline_activation(
         generated,
         stages_out,
         head.model.clone(),
-        "pipeline_activation",
+        "pipeline_activation_v4",
     ))
 }
 

@@ -41,6 +41,7 @@ pub struct PipelineStepOutcome {
 pub fn run_pipeline_step(
     config: &PipelineStepConfig,
     req: &PipelineStepRequest,
+    daemon: &mut Option<crate::pipeline_daemon::PipelineDaemon>,
 ) -> Result<PipelineStepOutcome> {
     if !config.pipeline_step_bin.is_file() {
         bail!(
@@ -58,6 +59,9 @@ pub fn run_pipeline_step(
 
     let activation_out = session_dir.join("activation-out.bin");
     let activation_in = session_dir.join("activation-in.bin");
+    let activation_out_str = activation_out.to_string_lossy().to_string();
+    let activation_in_str = activation_in.to_string_lossy().to_string();
+    let session_dir_str = session_dir.to_string_lossy().to_string();
 
     if req.op == "forward-activation" {
         if req.activation_b64.is_empty() {
@@ -70,11 +74,43 @@ pub fn run_pipeline_step(
             .with_context(|| format!("write {}", activation_in.display()))?;
     }
 
+    if let Some(mut outcome) = crate::pipeline_daemon::try_run_via_daemon(
+        daemon,
+        config,
+        req,
+        &session_dir_str,
+        &activation_out_str,
+        &activation_in_str,
+    )? {
+        if outcome.activation_b64.is_none() && activation_out.is_file() {
+            let out_path = activation_out.display().to_string();
+            let bytes = fs::read(&activation_out).with_context(|| format!("read {out_path}"))?;
+            outcome.activation_b64 = Some(STANDARD.encode(bytes));
+        }
+    return Ok(outcome);
+}
+
+run_pipeline_step_subprocess(
+        config,
+        req,
+        &session_dir,
+        &activation_out,
+        &activation_in,
+    )
+}
+
+fn run_pipeline_step_subprocess(
+    config: &PipelineStepConfig,
+    req: &PipelineStepRequest,
+    session_dir: &std::path::Path,
+    activation_out: &std::path::Path,
+    activation_in: &std::path::Path,
+) -> Result<PipelineStepOutcome> {
     let mut cmd = Command::new(&config.pipeline_step_bin);
     cmd.arg("-m")
         .arg(&config.model_path)
         .arg("--session-dir")
-        .arg(&session_dir)
+        .arg(session_dir)
         .arg("--op")
         .arg(&req.op);
 
@@ -86,17 +122,17 @@ pub fn run_pipeline_step(
             cmd.arg("-p")
                 .arg(&req.prompt)
                 .arg("--activation-out")
-                .arg(&activation_out);
+                .arg(activation_out);
         }
         "decode-token" => {
             cmd.arg("--token-id")
                 .arg(req.token_id.to_string())
                 .arg("--activation-out")
-                .arg(&activation_out);
+                .arg(activation_out);
         }
         "forward-activation" => {
             cmd.arg("--activation-in")
-                .arg(&activation_in)
+                .arg(activation_in)
                 .arg("--sample")
                 .arg(if req.sample { "1" } else { "0" });
         }
@@ -134,7 +170,7 @@ pub fn run_pipeline_step(
     }
 
     let activation_b64 = if activation_out.is_file() {
-        let bytes = fs::read(&activation_out)
+        let bytes = fs::read(activation_out)
             .with_context(|| format!("read {}", activation_out.display()))?;
         Some(STANDARD.encode(bytes))
     } else {
