@@ -15,6 +15,8 @@
       --accent: #3d8bfd;
       --user: #1a3a5c;
       --bot: #151c26;
+      --tier: #1e3d2f;
+      --tier-text: #7dcea0;
     }
     * { box-sizing: border-box; }
     body {
@@ -34,10 +36,21 @@
       align-items: center;
       gap: 1rem;
       background: var(--panel);
+      flex-wrap: wrap;
     }
     header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
     header p { margin: 0.15rem 0 0; font-size: 0.8rem; color: var(--muted); }
-    #cluster { font-size: 0.75rem; color: var(--muted); text-align: right; }
+    .header-right { text-align: right; font-size: 0.75rem; color: var(--muted); }
+    .tier-badge {
+      display: inline-block;
+      margin-top: 0.35rem;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      background: var(--tier);
+      color: var(--tier-text);
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
     main {
       flex: 1;
       display: flex;
@@ -67,6 +80,7 @@
     }
     .msg.user { align-self: flex-end; background: var(--user); }
     .msg.bot { align-self: flex-start; background: var(--bot); border: 1px solid var(--border); }
+    .msg.thinking { opacity: 0.7; font-style: italic; }
     .meta { font-size: 0.7rem; color: var(--muted); margin-top: 0.35rem; }
     form {
       display: flex;
@@ -74,10 +88,15 @@
       border-top: 1px solid var(--border);
       padding-top: 1rem;
     }
-    input, button {
+    input, button, select {
       font: inherit;
       border-radius: 10px;
       border: 1px solid var(--border);
+    }
+    select {
+      background: var(--panel);
+      color: var(--text);
+      padding: 0.75rem 0.5rem;
     }
     input {
       flex: 1;
@@ -102,15 +121,23 @@
   <header>
     <div>
       <h1>YouAI Chat</h1>
-      <p>IA distribuída — cada mensagem vai para um nó do cluster</p>
+      <p>Modelo partido entre PCs — pipeline distribuído</p>
     </div>
-    <div id="cluster">Carregando nós…</div>
+    <div class="header-right">
+      <div id="cluster">Carregando…</div>
+      <div id="tier" class="tier-badge">tier —</div>
+    </div>
   </header>
   <main>
     <div id="messages">
-      <div class="empty">Envie uma mensagem. O coordinator escolhe um nó online para responder.</div>
+      <div class="empty">Envie uma mensagem. O coordinator usa o cluster pipeline quando disponível.</div>
     </div>
     <form id="chat-form">
+      <select id="mode" title="Modo de routing">
+        <option value="auto" selected>auto</option>
+        <option value="pipeline">pipeline</option>
+        <option value="replica">replica</option>
+      </select>
       <input id="prompt" type="text" placeholder="Digite sua mensagem…" autocomplete="off" required />
       <button type="submit" id="send-btn">Enviar</button>
     </form>
@@ -121,24 +148,36 @@
     const form = document.getElementById('chat-form');
     const promptInput = document.getElementById('prompt');
     const sendBtn = document.getElementById('send-btn');
+    const modeSelect = document.getElementById('mode');
     const clusterEl = document.getElementById('cluster');
+    const tierEl = document.getElementById('tier');
 
-    async function refreshCluster() {
+    async function refreshStatus() {
       try {
-        const res = await fetch(`${API}/api/v1/nodes`);
-        const data = await res.json();
-        const online = (data.nodes || []).filter(n => n.online);
-        clusterEl.textContent = `${online.length} nó(s) online`;
+        const [nodesRes, tierRes] = await Promise.all([
+          fetch(`${API}/api/v1/nodes`),
+          fetch(`${API}/api/v1/registry/tier`),
+        ]);
+        const nodes = await nodesRes.json();
+        const tier = await tierRes.json();
+        const online = (nodes.nodes || []).filter(n => n.online);
+        const pipeline = online.filter(n => n.pipeline_kind === 'activation');
+        clusterEl.textContent = `${online.length} nó(s) online · ${pipeline.length} pipeline`;
+        tierEl.textContent = `${tier.display_name || tier.active_tier} · ${tier.model_id || '—'}`;
+        if (tier.next_tier && tier.next_tier_compute_needed) {
+          tierEl.title = `Próximo: ${tier.next_tier} (faltam ${tier.next_tier_compute_needed} CU)`;
+        }
       } catch {
         clusterEl.textContent = 'Coordinator offline';
+        tierEl.textContent = 'offline';
       }
     }
 
-    function addMessage(role, text, meta) {
+    function addMessage(role, text, meta, extraClass) {
       const empty = messages.querySelector('.empty');
       if (empty) empty.remove();
       const el = document.createElement('div');
-      el.className = `msg ${role}`;
+      el.className = `msg ${role}${extraClass ? ' ' + extraClass : ''}`;
       el.textContent = text;
       if (meta) {
         const m = document.createElement('div');
@@ -148,39 +187,46 @@
       }
       messages.appendChild(el);
       messages.scrollTop = messages.scrollHeight;
+      return el;
     }
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const prompt = promptInput.value.trim();
       if (!prompt) return;
+      const mode = modeSelect.value;
       promptInput.value = '';
       sendBtn.disabled = true;
       addMessage('user', prompt);
+      const thinking = addMessage('bot', 'A pensar…', null, 'thinking');
       try {
         const res = await fetch(`${API}/api/v1/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, max_tokens: 128 }),
+          body: JSON.stringify({ prompt, max_tokens: 128, mode }),
         });
         const data = await res.json();
+        thinking.remove();
         if (!res.ok) throw new Error(data.error || res.statusText);
-        let meta = `modo: ${data.mode || 'replica'} · nó final: ${data.node_name} · modelo: ${data.model}`;
+        let meta = `modo: ${data.mode || mode} · nó: ${data.node_name} · modelo: ${data.model}`;
+        if (data.cached) meta += ' · cache';
         if (data.stages && data.stages.length > 1) {
           meta += ' · pipeline: ' + data.stages.map(s => `${s.node_name}@${s.shard_stage}`).join(' → ');
         }
-        addMessage('bot', data.text, meta);
+        const text = (data.text || '').trim() || '(resposta vazia — tenta outro prompt)';
+        addMessage('bot', text, meta);
       } catch (err) {
+        thinking.remove();
         addMessage('bot', `Erro: ${err.message}`, 'tente novamente');
       } finally {
         sendBtn.disabled = false;
         promptInput.focus();
-        refreshCluster();
+        refreshStatus();
       }
     });
 
-    refreshCluster();
-    setInterval(refreshCluster, 15000);
+    refreshStatus();
+    setInterval(refreshStatus, 15000);
     promptInput.focus();
   </script>
 </body>

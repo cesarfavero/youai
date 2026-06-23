@@ -249,8 +249,8 @@ Documento completo: [docs/PRODUCT.md](docs/PRODUCT.md)
 | `youai-node` | ✅ CLI start/pause/status/config |
 | `youai-coordinator` | ✅ Registo, heartbeat, chat, pipeline v4 |
 | Pipeline v1–v4 | ✅ Réplica + RPC + GGUF + activation + daemon |
-| Model Registry | ✅ `registry/manifest.json` tier1 · API planeado |
-| `youai-web` | 🔜 Chat mínimo |
+| Model Registry | ✅ manifest + `GET /api/v1/registry/{manifest,tier,models/:id}` |
+| `youai-web` | ✅ Chat mínimo (servido pelo coordinator em `/`) |
 | App desktop | 🔜 Tauri/Electron + node embutido |
 | E2E / job signing | 🔜 Alpha/Beta |
 
@@ -258,7 +258,7 @@ Documento completo: [docs/PRODUCT.md](docs/PRODUCT.md)
 
 **Cluster real (default):** `./scripts/setup-pipeline-cluster.sh` — um modelo partido entre PCs. **Não** usar `setup-replica-cluster.sh` como setup principal (só teste de throughput).
 
-**Meta imediata:** qualidade (chat template, EOS) + registry API REST.
+**Meta imediata:** qualidade de resposta pipeline + beta 10 pessoas.
 
 ---
 

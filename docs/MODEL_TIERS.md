@@ -113,7 +113,7 @@ Avalia métricas da rede (N nós, RAM, chains)
 |----------|--------|
 | `GET /api/v1/registry/manifest` | Manifesto completo assinado |
 | `GET /api/v1/registry/tier` | Tier activo para esta rede + razão |
-| `GET /api/v1/registry/models/{id}` | Metadados + URL + hash |
+| `GET /api/v1/registry/models/{id}` | Metadados + URL + hash ✅ |
 | `POST /api/v1/nodes/model-status` | Nó reporta modelo instalado + hash |
 
 ---
