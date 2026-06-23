@@ -6,7 +6,9 @@ use tokio::net::TcpStream;
 use tracing::warn;
 use uuid::Uuid;
 use youai_common::{
-    chat_template::{clean_assistant_response, format_instruct_prompt, is_eos_piece},
+    chat_template::{
+        clean_assistant_response, format_instruct_prompt, is_degenerate_piece, is_eos_piece,
+    },
     ChatStageInfo, InferRequest, InferResponse, PipelineStepRequest, PipelineStepResponse,
     RemoteShardSource, PIPELINE_KIND_ACTIVATION,
 };
@@ -217,11 +219,13 @@ async fn run_pipeline_activation(
             .token_id
             .ok_or_else(|| "tail stage produced no token_id".to_string())?;
         if let Some(piece) = sampled.text {
-            if is_eos_piece(&piece) {
+            if is_eos_piece(&piece) || is_degenerate_piece(&piece) {
                 break;
             }
             generated.push_str(&piece);
             stage_texts[1].push_str(&piece);
+        } else {
+            break;
         }
 
         if is_eos_piece(&generated) || token_idx + 1 >= max_tokens {
