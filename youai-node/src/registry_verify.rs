@@ -76,6 +76,19 @@ fn find_model_sha256(
         .and_then(|n| n.to_str())
         .unwrap_or("");
 
+    // Pass 1: pipeline stage GGUFs (exact filename) — before fuzzy id match on tier0 full model.
+    for tier in tiers.values() {
+        let Some(models) = tier.get("models").and_then(|m| m.as_array()) else {
+            continue;
+        };
+        for model in models {
+            if let Some(stage_hash) = stage_file_sha256(model, filename) {
+                return Ok(Some(stage_hash));
+            }
+        }
+    }
+
+    // Pass 2: full model entry
     for tier in tiers.values() {
         let Some(models) = tier.get("models").and_then(|m| m.as_array()) else {
             continue;
@@ -97,4 +110,39 @@ fn find_model_sha256(
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn stage_gguf_uses_stage_hash_not_full_model() {
+        let raw = include_str!("../../registry/manifest.json");
+        let manifest: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let path = Path::new("smollm2-360m-instruct-q4_k_m-stage00-of-02.gguf");
+        let hash = find_model_sha256(&manifest, "smollm2-360m-instruct", path)
+            .unwrap()
+            .unwrap();
+        assert_eq!(hash, "9d186b6e6b5aadc1ffc8bc1c3458f6bd36745b7c237f7b1839d79ff2dd8549a7");
+    }
+}
+
+fn stage_file_sha256(model: &serde_json::Value, filename: &str) -> Option<String> {
+    let stages = model
+        .get("pipeline")
+        .and_then(|p| p.get("stage_files"))
+        .and_then(|s| s.as_array())?;
+    for stage in stages {
+        let stage_name = stage.get("filename").and_then(|v| v.as_str()).unwrap_or("");
+        if stage_name == filename {
+            return stage
+                .get("sha256")
+                .and_then(|v| v.as_str())
+                .filter(|h| !h.is_empty())
+                .map(|h| h.to_string());
+        }
+    }
+    None
 }

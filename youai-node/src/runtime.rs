@@ -9,6 +9,7 @@ use youai_common::{
     clear_runtime_state, compute::parse_ram_max_mb, is_process_alive, load_runtime_state,
     save_config, save_runtime_state, signing, worker_health_url, worker_url, HeartbeatRequest,
     NodeConfig, RegisterNodeRequest, RegisterNodeResponse, RuntimeState, HEARTBEAT_INTERVAL_SECS,
+    PIPELINE_KIND_ACTIVATION,
 };
 
 pub struct NodeRuntime {
@@ -31,14 +32,11 @@ impl NodeRuntime {
             let _ = clear_runtime_state();
         }
 
-        let guard_bin = resolve_binary("youai-guard")?;
-        let worker_bin = resolve_binary("youai-worker")?;
         let model_path = youai_common::resolve_model_path(&config)?;
         crate::registry_verify::verify_model_against_manifest(
             &model_path,
             &config.model.name,
         )?;
-        let llama_cli = youai_common::resolve_llama_cli(&config)?;
         let worker_url = worker_url(&config.worker_host, config.worker_port);
         let coordinator_url = config.coordinator_url.clone();
 
@@ -51,36 +49,7 @@ impl NodeRuntime {
             "spawning worker under guard"
         );
 
-        let mut worker_cmd = Command::new(&guard_bin);
-        worker_cmd
-            .arg("run")
-            .arg("--ram-max")
-            .arg(&config.resources.ram_max)
-            .arg("--cpu-percent")
-            .arg(config.resources.cpu_percent.to_string())
-            .arg("--")
-            .arg(&worker_bin)
-            .args([
-                "serve",
-                "--host",
-                &config.worker_host,
-                "--port",
-                &config.worker_port.to_string(),
-                "--model",
-                model_path.to_str().context("model path is not UTF-8")?,
-                "--llama-cli",
-                llama_cli.to_str().context("llama-cli path is not UTF-8")?,
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Ok(dir) = std::env::var("YOUAI_BIN_DIR") {
-            worker_cmd.env("YOUAI_BIN_DIR", dir);
-        }
-        let worker_child = worker_cmd.spawn().with_context(|| {
-            format!("spawn {} -> {}", guard_bin.display(), worker_bin.display())
-        })?;
-
+        let worker_child = spawn_worker_child(&config, &model_path)?;
         wait_for_worker_health(&worker_health_url(&config.worker_host, config.worker_port)).await?;
 
         let http = Client::builder()
@@ -129,9 +98,11 @@ impl NodeRuntime {
                         warn!(error = %err, "heartbeat failed");
                     }
                     if let Ok(Some(status)) = self.worker_child.try_wait() {
-                        error!(?status, "worker exited unexpectedly");
-                        let _ = clear_runtime_state();
-                        anyhow::bail!("worker process exited");
+                        error!(?status, "worker exited unexpectedly — restarting");
+                        if let Err(err) = self.restart_worker().await {
+                            let _ = clear_runtime_state();
+                            anyhow::bail!("worker restart failed: {err}");
+                        }
                     }
                 }
                 _ = tokio::signal::ctrl_c() => {
@@ -196,6 +167,76 @@ impl NodeRuntime {
         let _ = self.worker_child.wait();
         Ok(())
     }
+
+    async fn restart_worker(&mut self) -> Result<()> {
+        let model_path = youai_common::resolve_model_path(&self.config)?;
+        cleanup_orphan_pipeline_daemons(&self.config, &model_path);
+        let _ = self.worker_child.kill();
+        let _ = self.worker_child.wait();
+
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        self.worker_child = spawn_worker_child(&self.config, &model_path)?;
+        wait_for_worker_health(&worker_health_url(
+            &self.config.worker_host,
+            self.config.worker_port,
+        ))
+        .await?;
+        self.persist_state()?;
+        info!("worker restarted");
+        Ok(())
+    }
+}
+
+fn spawn_worker_child(config: &NodeConfig, model_path: &std::path::Path) -> Result<Child> {
+    let guard_bin = resolve_binary("youai-guard")?;
+    let worker_bin = resolve_binary("youai-worker")?;
+    let llama_cli = youai_common::resolve_llama_cli(config)?;
+
+    let mut worker_cmd = Command::new(&guard_bin);
+    worker_cmd
+        .arg("run")
+        .arg("--ram-max")
+        .arg(&config.resources.ram_max)
+        .arg("--cpu-percent")
+        .arg(config.resources.cpu_percent.to_string())
+        .arg("--")
+        .arg(&worker_bin)
+        .args([
+            "serve",
+            "--host",
+            &config.worker_host,
+            "--port",
+            &config.worker_port.to_string(),
+            "--model",
+            model_path.to_str().context("model path is not UTF-8")?,
+            "--llama-cli",
+            llama_cli.to_str().context("llama-cli path is not UTF-8")?,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Ok(dir) = std::env::var("YOUAI_BIN_DIR") {
+        worker_cmd.env("YOUAI_BIN_DIR", dir);
+    }
+    worker_cmd
+        .spawn()
+        .with_context(|| format!("spawn {} -> {}", guard_bin.display(), worker_bin.display()))
+}
+
+fn cleanup_orphan_pipeline_daemons(config: &NodeConfig, model_path: &std::path::Path) {
+    if config.shard.pipeline_kind != PIPELINE_KIND_ACTIVATION {
+        return;
+    }
+    let Some(model) = model_path.to_str() else {
+        return;
+    };
+    let pattern = format!("youai-pipeline-step.*{model}");
+    let _ = Command::new("pkill")
+        .args(["-f", &pattern])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 pub fn pause_running_node() -> Result<()> {
