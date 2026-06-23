@@ -2,6 +2,19 @@
 
 > Guia prático: réplica vs pipeline, v1–v4 implementados, setup e troubleshooting.
 
+## Cluster real (default — ler primeiro)
+
+**O produto YouAI é pipeline:** um modelo partido entre vários PCs; **cada mensagem passa por todos os estágios**. Não é alternar mensagens entre máquinas com o modelo completo em cada uma.
+
+| Setup | Script | Uso |
+|-------|--------|-----|
+| **Cluster real (2 máquinas)** | `./scripts/setup-pipeline-cluster.sh` | Mac stage 0 + Ubuntu stage 1 |
+| Dogfood replica (só teste) | `./scripts/setup-replica-cluster.sh` | Throughput tier1; **não** usar como default |
+
+`mode=auto` (default): **pipeline** se a cadeia `default-pipeline` estiver completa; senão réplica.
+
+Para modelos grandes (7B+), só pipeline faz sentido — cada nó guarda uma % das camadas (ex. 30B em M1 + i5+GPU).
+
 ## Modos de inferência
 
 | Modo | O que faz | Quando usar |
@@ -190,6 +203,9 @@ youai-node config \
 | `scripts/ubuntu-test-vm.sh start-node-gguf` | VM stage 1 (v2) |
 | `scripts/setup-pipeline-mac.sh` | Mac stage 0 (v1 RPC) |
 | `scripts/ubuntu-test-vm.sh start-node` | VM stage 1 (v1 RPC) |
+| `scripts/setup-pipeline-cluster.sh` | **Cluster real** — Mac stage 0 + Ubuntu stage 1 (v3/v4) |
+| `scripts/setup-replica-cluster.sh` | Dogfood réplica — modelo completo em cada máquina |
+| `scripts/test-replica-round-robin.sh` | Teste round-robin réplica (`mode=replica`) |
 
 ---
 
@@ -200,8 +216,10 @@ youai-node config \
 | `no complete shard chain` | Falta stage 0 ou 1 online | `youai-node start` no Mac (terminal dedicado); verificar heartbeats |
 | `pipeline_kind` vazio no Mac | Node registrou antes do config v3 | `youai-node pause && youai-node start` |
 | `pipeline step failed` / empty reply | `YOUAI_BIN_DIR` sem `youai-pipeline-step` | `export YOUAI_BIN_DIR=$PWD/target/release` |
-| Worker healthy mas node offline | Só worker a correr, sem `youai-node` | Reiniciar `youai-node start` |
-| Texto gibberish | Sem chat template no prefill | Próximo passo: template SmolLM2 no coordinator |
+| Worker healthy mas node offline | Só worker a correr, sem `youai-node` | Reiniciar `youai-node start` (supervisor reinicia worker automaticamente) |
+| `mode=replica` com 503 | Só pipeline shards online | Usar `setup-replica-cluster.sh` ou `mode=pipeline`/`auto` |
+| Trocar pipeline ↔ réplica | Nós stale no coordinator | `youai-node pause` + `clean-coordinator.sh` antes de mudar topology |
+| Texto curto/estranho | Template/EOS ainda a afinar | Ver commit `7084978`; ajustar `max_tokens` e prompt |
 | Só 2 stages | v3/v4 MVP | 3+ stages precisa export de activação nos intermediários |
 | Daemon lento no 1º token | Cold start do daemon | Normal; tokens seguintes são rápidos |
 
@@ -212,7 +230,7 @@ youai-node config \
 - **2 stages** apenas (SmolLM2 360M partido ao meio)
 - **Greedy decode** no último stage
 - **Activations** em base64 via coordinator (OK para dogfood LAN)
-- **Chat template** ainda não aplicado no prefill
+- **Chat template SmolLM2** aplicado no prefill; qualidade de resposta ainda a afinar
 
 ## Próximo (v5+)
 

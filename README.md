@@ -207,7 +207,7 @@ Documentos: [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) (design completo �
 | Activations opacas (pipeline) | ⚠️ LAN dogfood; E2E planeado |
 | E2E chat | ❌ Planeado |
 | Job signing | ❌ Planeado |
-| Verificação hash no node | ❌ Planeado (manifest já no repo) |
+| Verificação hash no node | ✅ SHA256 vs `registry/manifest.json` (`YOUAI_SKIP_MODEL_VERIFY=1` para dogfood) |
 | Pausa inteligente | ❌ Planeado |
 
 ---
@@ -256,7 +256,9 @@ Documento completo: [docs/PRODUCT.md](docs/PRODUCT.md)
 
 **Fase actual:** dogfood multi-máquina — Mac Mini (stage 0) + VM/PC (stage 1), modo `pipeline_activation_v4`.
 
-**Meta imediata:** qualidade (chat template, EOS) + registry API + verificação SHA256 no node.
+**Cluster real (default):** `./scripts/setup-pipeline-cluster.sh` — um modelo partido entre PCs. **Não** usar `setup-replica-cluster.sh` como setup principal (só teste de throughput).
+
+**Meta imediata:** qualidade (chat template, EOS) + registry API REST.
 
 ---
 
