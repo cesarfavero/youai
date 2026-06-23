@@ -60,6 +60,16 @@ pub struct ShardConfig {
     /// Total stages in this pipeline (1 = no pipeline).
     #[serde(default = "default_shard_total_stages")]
     pub total_stages: u8,
+    /// GGUF split index (0-based) when using pipeline v2.
+    #[serde(default)]
+    pub gguf_shard_index: u16,
+    /// Total GGUF splits for this model (1 = full unsplit model).
+    #[serde(default = "default_gguf_shard_total")]
+    pub gguf_shard_total: u16,
+}
+
+fn default_gguf_shard_total() -> u16 {
+    1
 }
 
 impl Default for ShardConfig {
@@ -68,6 +78,8 @@ impl Default for ShardConfig {
             group: String::new(),
             stage: 0,
             total_stages: default_shard_total_stages(),
+            gguf_shard_index: 0,
+            gguf_shard_total: default_gguf_shard_total(),
         }
     }
 }
@@ -187,6 +199,10 @@ pub fn models_dir() -> Result<PathBuf> {
     Ok(youai_dir()?.join("models"))
 }
 
+pub fn shards_dir() -> Result<PathBuf> {
+    Ok(youai_dir()?.join("shards"))
+}
+
 pub fn default_model_path() -> Result<PathBuf> {
     Ok(models_dir()?.join(DEFAULT_MODEL_FILENAME))
 }
@@ -286,6 +302,46 @@ pub fn resolve_rpc_server() -> Result<PathBuf> {
     anyhow::bail!("rpc-server not found. Rebuild llama.cpp with RPC: ./scripts/setup-llama.sh");
 }
 
+/// Build sibling path for a llama.cpp multi-part GGUF (e.g. `*-00002-of-00002.gguf`).
+pub fn gguf_split_sibling_path(
+    local: &std::path::Path,
+    target_index: u16,
+    total: u16,
+) -> Result<PathBuf> {
+    let (prefix, _, file_total) = parse_gguf_split_parts(local)?;
+    if file_total != total {
+        anyhow::bail!("split total mismatch: file has {file_total}, expected {total}");
+    }
+    let file_idx = target_index.saturating_add(1);
+    let sibling = format!("{prefix}-{file_idx:05}-of-{total:05}.gguf");
+    Ok(local.with_file_name(sibling))
+}
+
+/// Zero-based GGUF split index (0 = `*-00001-of-*.gguf`).
+pub fn parse_gguf_split_filename(path: &std::path::Path) -> Option<(u16, u16)> {
+    let (_, file_idx, total) = parse_gguf_split_parts(path).ok()?;
+    Some((file_idx.saturating_sub(1), total))
+}
+
+fn parse_gguf_split_parts(path: &std::path::Path) -> Result<(String, u16, u16)> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .context("model path has no filename")?;
+    let rest = name
+        .strip_suffix(".gguf")
+        .context("model file must end with .gguf")?;
+    let (left, total_str) = rest
+        .rsplit_once("-of-")
+        .context("model is not a GGUF split (*-NNNNN-of-MMMMM.gguf)")?;
+    let (prefix, index_str) = left
+        .rsplit_once('-')
+        .context("invalid GGUF split index in filename")?;
+    let index: u16 = index_str.parse().context("invalid GGUF split index")?;
+    let total: u16 = total_str.parse().context("invalid GGUF split count")?;
+    Ok((prefix.to_string(), index, total))
+}
+
 fn which_binary(name: &str) -> Result<PathBuf> {
     let output = std::process::Command::new("which")
         .arg(name)
@@ -342,6 +398,10 @@ pub struct RegisterNodeRequest {
     pub shard_total_stages: u8,
     #[serde(default)]
     pub rpc_url: String,
+    #[serde(default)]
+    pub gguf_shard_index: u16,
+    #[serde(default = "default_gguf_shard_total")]
+    pub gguf_shard_total: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -373,6 +433,10 @@ pub struct NodeInfo {
     /// llama.cpp RPC endpoint (host:port) for tensor offload backends.
     #[serde(default)]
     pub rpc_url: String,
+    #[serde(default)]
+    pub gguf_shard_index: u16,
+    #[serde(default = "default_gguf_shard_total")]
+    pub gguf_shard_total: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -430,6 +494,13 @@ pub struct ChatStageInfo {
 
 // --- Worker API types ---
 
+/// Remote GGUF shard hosted on another pipeline stage worker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteShardSource {
+    pub worker_url: String,
+    pub gguf_shard_index: u16,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferRequest {
     pub prompt: String,
@@ -438,6 +509,9 @@ pub struct InferRequest {
     /// Remote llama.cpp RPC servers (host:port) for real tensor split.
     #[serde(default)]
     pub rpc_servers: Vec<String>,
+    /// Pipeline v2: fetch missing GGUF splits from peer workers before infer.
+    #[serde(default)]
+    pub remote_shards: Vec<RemoteShardSource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -518,5 +592,16 @@ mod tests {
         let raw = toml::to_string(&config).unwrap();
         let parsed: NodeConfig = toml::from_str(&raw).unwrap();
         assert_eq!(parsed.model.name, DEFAULT_MODEL_NAME);
+    }
+
+    #[test]
+    fn gguf_split_sibling_paths() {
+        let local = PathBuf::from("/tmp/smollm2-360m-instruct-q4_k_m-00001-of-00002.gguf");
+        assert_eq!(parse_gguf_split_filename(&local), Some((0, 2)));
+        let s2 = gguf_split_sibling_path(&local, 1, 2).unwrap();
+        assert_eq!(
+            s2,
+            PathBuf::from("/tmp/smollm2-360m-instruct-q4_k_m-00002-of-00002.gguf")
+        );
     }
 }

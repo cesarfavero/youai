@@ -100,6 +100,7 @@ async fn exec_infer(
         max_tokens,
         timeout: youai_worker::llama::default_timeout(),
         rpc_servers: vec![],
+        remote_shards: vec![],
     })?;
 
     println!("{text}");

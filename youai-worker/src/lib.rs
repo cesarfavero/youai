@@ -2,6 +2,7 @@
 
 pub mod llama;
 pub mod server;
+pub mod shards;
 
 pub use llama::{run_inference, InferenceConfig};
 pub use server::{serve, WorkerState};

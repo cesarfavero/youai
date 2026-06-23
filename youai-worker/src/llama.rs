@@ -1,8 +1,10 @@
+use crate::shards::ensure_gguf_shards_local;
 use anyhow::{bail, Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use tracing::{info, warn};
+use youai_common::RemoteShardSource;
 
 #[derive(Debug, Clone)]
 pub struct InferenceConfig {
@@ -13,6 +15,7 @@ pub struct InferenceConfig {
     pub max_tokens: u32,
     pub timeout: Duration,
     pub rpc_servers: Vec<String>,
+    pub remote_shards: Vec<RemoteShardSource>,
 }
 
 pub fn run_inference(config: &InferenceConfig) -> Result<String> {
@@ -26,21 +29,21 @@ pub fn run_inference(config: &InferenceConfig) -> Result<String> {
         bail!("prompt is empty");
     }
 
+    let model_path = resolve_model_for_infer(&config.model_path, &config.remote_shards)?;
+
     info!(
         binary = %config.llama_cli.display(),
-        model = %config.model_path.display(),
+        model = %model_path.display(),
         max_tokens = config.max_tokens,
         rpc_servers = ?config.rpc_servers,
+        remote_shards = config.remote_shards.len(),
         "running llama.cpp inference"
     );
 
     let mut cmd = Command::new(&config.llama_cli);
     cmd.args([
         "-m",
-        config
-            .model_path
-            .to_str()
-            .context("model path is not UTF-8")?,
+        model_path.to_str().context("model path is not UTF-8")?,
         "-p",
         &config.prompt,
         "-n",
@@ -122,6 +125,16 @@ fn extract_response_text(stdout: &[u8]) -> String {
 
 pub fn default_timeout() -> Duration {
     Duration::from_secs(180)
+}
+
+fn resolve_model_for_infer(
+    model_path: &Path,
+    remote_shards: &[RemoteShardSource],
+) -> Result<PathBuf> {
+    if remote_shards.is_empty() {
+        return Ok(model_path.to_path_buf());
+    }
+    ensure_gguf_shards_local(model_path, remote_shards)
 }
 
 pub fn validate_paths(llama_cli: &Path, model_path: &Path) -> Result<()> {

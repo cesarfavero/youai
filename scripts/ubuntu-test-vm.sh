@@ -115,6 +115,58 @@ echo "Bootstrap complete."
 BOOT
 }
 
+start_node_gguf() {
+  bootstrap
+  ensure_worker_port_forward
+  echo "Starting youai-node (GGUF v2 shard 1) in Colima Ubuntu..."
+  echo "  Coordinator (Mac): ${COORDINATOR_URL}"
+  echo "  Worker advertise: ${WORKER_ADVERTISE}"
+
+  colima_sh bash -s <<START
+set -euo pipefail
+export HOME="\${HOME:-/home/\$(whoami)}"
+source "\$HOME/.cargo/env"
+export CARGO_TARGET_DIR=${VM_TARGET_DIR}
+export PATH=${VM_TARGET_DIR}/release:\$PATH
+export YOUAI_BIN_DIR=${VM_TARGET_DIR}/release
+mkdir -p "\$HOME/.youai/shards"
+MAC_SHARDS="/Users/cesarfavero/.youai/shards"
+SHARD1="\$(ls "\$MAC_SHARDS"/*-00002-of-00002.gguf 2>/dev/null | head -1 || true)"
+if [[ -z "\$SHARD1" ]]; then
+  echo "Mac GGUF shard 2 not found. Run: ./scripts/setup-pipeline-gguf-mac.sh" >&2
+  exit 1
+fi
+cp -f "\$SHARD1" "\$HOME/.youai/shards/"
+SHARD_VM="\$HOME/.youai/shards/\$(basename "\$SHARD1")"
+
+youai-node pause 2>/dev/null || true
+pkill -f 'youai-worker serve' 2>/dev/null || true
+pkill -f 'youai-guard' 2>/dev/null || true
+if [[ -f /tmp/youai-node.pid ]]; then rm -f /tmp/youai-node.pid; fi
+
+youai-node config \
+  --name ubuntu-colima \
+  --coordinator ${COORDINATOR_URL} \
+  --worker-host 0.0.0.0 \
+  --worker-port ${WORKER_PORT} \
+  --worker-advertise-url ${WORKER_ADVERTISE} \
+  --shard-group default-pipeline \
+  --shard-stage 1 \
+  --shard-total-stages 2 \
+  --gguf-shard-index 1 \
+  --gguf-shard-total 2 \
+  --clear-rpc-url \
+  --model-path "\$SHARD_VM" \
+  --cpu-percent 30 \
+  --ram-max 2g
+
+nohup youai-node start > /tmp/youai-node.log 2>&1 &
+echo \$! > /tmp/youai-node.pid
+sleep 2
+tail -5 /tmp/youai-node.log || true
+START
+}
+
 start_node() {
   bootstrap
   ensure_worker_port_forward
@@ -201,6 +253,8 @@ export HOME="${HOME:-/home/$(whoami)}"
 source "$HOME/.cargo/env"
 export PATH="$HOME/.youai/cargo-target/release:$PATH"
 youai-node pause 2>/dev/null || true
+pkill -f 'youai-worker serve' 2>/dev/null || true
+pkill -f 'youai-guard' 2>/dev/null || true
 if [[ -f /tmp/youai-node.pid ]]; then kill $(cat /tmp/youai-node.pid) 2>/dev/null || true; rm -f /tmp/youai-node.pid; fi
 if [[ -f /tmp/youai-rpc-server.pid ]]; then kill $(cat /tmp/youai-rpc-server.pid) 2>/dev/null || true; rm -f /tmp/youai-rpc-server.pid; fi
 PAUSE
@@ -223,13 +277,14 @@ case "${cmd}" in
   create) bootstrap ;;
   shell) shell ;;
   start-node) start_node ;;
+  start-node-gguf) start_node_gguf ;;
   status) status ;;
   logs) logs ;;
   pause) pause_node ;;
   destroy) destroy ;;
   -h|--help)
     cat <<EOF
-Usage: $0 {create|start-node|status|logs|shell|pause|destroy}
+Usage: $0 {create|start-node|start-node-gguf|status|logs|shell|pause|destroy}
 
 Prereq: brew install colima lima && colima start
 

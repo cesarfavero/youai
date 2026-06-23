@@ -18,6 +18,8 @@ pub struct StoredNode {
     pub shard_stage: u8,
     pub shard_total_stages: u8,
     pub rpc_url: String,
+    pub gguf_shard_index: u16,
+    pub gguf_shard_total: u16,
 }
 
 pub struct Database {
@@ -26,7 +28,7 @@ pub struct Database {
 
 const NODE_SELECT: &str =
     "SELECT id, token, name, region, worker_url, model, last_heartbeat, created_at,
-    shard_group, shard_stage, shard_total_stages, rpc_url FROM nodes";
+    shard_group, shard_stage, shard_total_stages, rpc_url, gguf_shard_index, gguf_shard_total FROM nodes";
 
 impl Database {
     pub fn open(path: &Path) -> Result<Self> {
@@ -74,6 +76,14 @@ impl Database {
             "ALTER TABLE nodes ADD COLUMN rpc_url TEXT NOT NULL DEFAULT ''",
             [],
         );
+        let _ = self.conn.execute(
+            "ALTER TABLE nodes ADD COLUMN gguf_shard_index INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = self.conn.execute(
+            "ALTER TABLE nodes ADD COLUMN gguf_shard_total INTEGER NOT NULL DEFAULT 1",
+            [],
+        );
         Ok(())
     }
 
@@ -82,9 +92,9 @@ impl Database {
             r#"
             INSERT INTO nodes (
                 id, token, name, region, worker_url, model, last_heartbeat, created_at,
-                shard_group, shard_stage, shard_total_stages, rpc_url
+                shard_group, shard_stage, shard_total_stages, rpc_url, gguf_shard_index, gguf_shard_total
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             ON CONFLICT(id) DO UPDATE SET
                 token = excluded.token,
                 name = excluded.name,
@@ -95,7 +105,9 @@ impl Database {
                 shard_group = excluded.shard_group,
                 shard_stage = excluded.shard_stage,
                 shard_total_stages = excluded.shard_total_stages,
-                rpc_url = excluded.rpc_url
+                rpc_url = excluded.rpc_url,
+                gguf_shard_index = excluded.gguf_shard_index,
+                gguf_shard_total = excluded.gguf_shard_total
             "#,
             params![
                 node.id,
@@ -110,6 +122,8 @@ impl Database {
                 node.shard_stage,
                 node.shard_total_stages,
                 node.rpc_url,
+                node.gguf_shard_index,
+                node.gguf_shard_total,
             ],
         )?;
         Ok(())
@@ -290,6 +304,8 @@ fn map_stored_node(row: &Row<'_>) -> rusqlite::Result<StoredNode> {
         shard_stage: row.get(9)?,
         shard_total_stages: row.get(10)?,
         rpc_url: row.get(11)?,
+        gguf_shard_index: row.get(12)?,
+        gguf_shard_total: row.get(13)?,
     })
 }
 
@@ -307,6 +323,8 @@ fn map_node_info(row: &Row<'_>) -> rusqlite::Result<NodeInfo> {
         shard_stage: row.get(9)?,
         shard_total_stages: row.get(10)?,
         rpc_url: row.get(11)?,
+        gguf_shard_index: row.get(12)?,
+        gguf_shard_total: row.get(13)?,
     })
 }
 

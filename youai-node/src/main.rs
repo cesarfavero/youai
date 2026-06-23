@@ -47,6 +47,13 @@ enum Commands {
         /// llama.cpp RPC endpoint advertised to coordinator (host:port)
         #[arg(long)]
         rpc_url: Option<String>,
+        /// Clear stored rpc_url (GGUF v2 nodes should not advertise RPC).
+        #[arg(long)]
+        clear_rpc_url: bool,
+        #[arg(long)]
+        gguf_shard_index: Option<u16>,
+        #[arg(long)]
+        gguf_shard_total: Option<u16>,
     },
     /// Configure resource limits and defaults
     Config {
@@ -80,6 +87,13 @@ enum Commands {
         region: Option<String>,
         #[arg(long)]
         rpc_url: Option<String>,
+        /// Clear stored rpc_url (GGUF v2 nodes should not advertise RPC).
+        #[arg(long)]
+        clear_rpc_url: bool,
+        #[arg(long)]
+        gguf_shard_index: Option<u16>,
+        #[arg(long)]
+        gguf_shard_total: Option<u16>,
     },
 }
 
@@ -118,6 +132,9 @@ async fn run() -> Result<()> {
             shard_total_stages,
             name,
             rpc_url,
+            clear_rpc_url,
+            gguf_shard_index,
+            gguf_shard_total,
         } => {
             let mut config = load_config().context("load config")?;
             apply_overrides(
@@ -132,13 +149,18 @@ async fn run() -> Result<()> {
                 None,
                 None,
             );
-            apply_shard_overrides(&mut config, shard_group, shard_stage, shard_total_stages);
+            apply_shard_overrides(
+                &mut config,
+                shard_group,
+                shard_stage,
+                shard_total_stages,
+                gguf_shard_index,
+                gguf_shard_total,
+            );
             if let Some(url) = worker_advertise_url {
                 config.worker_advertise_url = Some(url);
             }
-            if let Some(url) = rpc_url {
-                config.rpc_url = Some(url);
-            }
+            apply_rpc_url(&mut config, rpc_url, clear_rpc_url);
             save_config(&config)?;
 
             info!(
@@ -146,6 +168,8 @@ async fn run() -> Result<()> {
                 coordinator = %config.coordinator_url,
                 worker = %worker_url(&config.worker_host, config.worker_port),
                 rpc = ?config.rpc_url,
+                gguf_shard = config.shard.gguf_shard_index,
+                gguf_total = config.shard.gguf_shard_total,
                 "starting node"
             );
 
@@ -169,6 +193,9 @@ async fn run() -> Result<()> {
             shard_total_stages,
             region,
             rpc_url,
+            clear_rpc_url,
+            gguf_shard_index,
+            gguf_shard_total,
         } => {
             let mut config = load_config().context("load config")?;
             apply_overrides(
@@ -183,16 +210,21 @@ async fn run() -> Result<()> {
                 model_path,
                 llama_cli,
             );
-            apply_shard_overrides(&mut config, shard_group, shard_stage, shard_total_stages);
+            apply_shard_overrides(
+                &mut config,
+                shard_group,
+                shard_stage,
+                shard_total_stages,
+                gguf_shard_index,
+                gguf_shard_total,
+            );
             if let Some(url) = worker_advertise_url {
                 config.worker_advertise_url = Some(url);
             }
             if let Some(region) = region {
                 config.region = region;
             }
-            if let Some(url) = rpc_url {
-                config.rpc_url = Some(url);
-            }
+            apply_rpc_url(&mut config, rpc_url, clear_rpc_url);
             save_config(&config)?;
             println!("config saved to {}", youai_common::config_path()?.display());
             runtime::show_status(&config).await?;
@@ -243,11 +275,23 @@ fn apply_overrides(
     }
 }
 
+fn apply_rpc_url(config: &mut NodeConfig, rpc_url: Option<String>, clear_rpc_url: bool) {
+    if clear_rpc_url {
+        config.rpc_url = None;
+        return;
+    }
+    if let Some(url) = rpc_url {
+        config.rpc_url = Some(url);
+    }
+}
+
 fn apply_shard_overrides(
     config: &mut NodeConfig,
     shard_group: Option<String>,
     shard_stage: Option<u8>,
     shard_total_stages: Option<u8>,
+    gguf_shard_index: Option<u16>,
+    gguf_shard_total: Option<u16>,
 ) {
     if let Some(group) = shard_group {
         config.shard.group = group;
@@ -257,5 +301,11 @@ fn apply_shard_overrides(
     }
     if let Some(total) = shard_total_stages {
         config.shard.total_stages = total;
+    }
+    if let Some(index) = gguf_shard_index {
+        config.shard.gguf_shard_index = index;
+    }
+    if let Some(total) = gguf_shard_total {
+        config.shard.gguf_shard_total = total;
     }
 }

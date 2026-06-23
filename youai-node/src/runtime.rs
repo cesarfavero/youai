@@ -330,6 +330,8 @@ async fn register_or_reuse(
             shard_stage: config.shard.stage,
             shard_total_stages: config.shard.total_stages,
             rpc_url: config.rpc_url.clone().unwrap_or_default(),
+            gguf_shard_index: config.shard.gguf_shard_index,
+            gguf_shard_total: config.shard.gguf_shard_total,
         })
         .send()
         .await

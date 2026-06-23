@@ -45,9 +45,28 @@ O llama.cpp distribui **pesos e KV cache** entre dispositivos locais e remotos p
 - `pipeline.rs` — um `POST /infer` no head + health TCP nos backends RPC
 - `scripts/ubuntu-test-vm.sh` — sobe `rpc-server`, port-forward `:50052`
 
-### v2 — GGUF por camadas (próximo)
+### v2 — GGUF distribuído (atual) ✅
 
-Split explícito com `llama-gguf-split`: cada nó carrega um subconjunto de camadas do GGUF. Requer loader custom ou múltiplos ficheiros + orquestração de activações entre estágios.
+Cada nó guarda **apenas o seu ficheiro** `*-0000N-of-0000M.gguf`. No infer, o stage 0:
+
+1. Faz `GET /model/shard` nos workers dos stages 1+
+2. Junta todos os splits no mesmo diretório (cache local)
+3. Corre `llama-completion -m *-00001-of-*.gguf` (llama.cpp carrega todos os splits)
+
+```bash
+./scripts/split-model.sh                    # parte o GGUF em 2
+./scripts/setup-pipeline-gguf-mac.sh        # Mac: shard 0
+./scripts/ubuntu-test-vm.sh start-node-gguf # VM: só shard 1
+./scripts/test-shard-pipeline-gguf.sh       # mode=pipeline_gguf
+```
+
+Resposta: `mode: "pipeline_gguf"`, `stages[1]`: `[gguf shard 1 @ http://...]`
+
+**Híbrido:** stages 1+ podem ter `rpc_url` + GGUF shard — compute offload RPC com pesos distribuídos.
+
+### v3 — activações por camada (futuro)
+
+Passar hidden states entre estágios sem reunir o GGUF completo no stage 0 (requer integração mais profunda com llama.cpp).
 
 ---
 

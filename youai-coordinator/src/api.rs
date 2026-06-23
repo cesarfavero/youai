@@ -124,6 +124,8 @@ async fn register_node(
             shard_stage: body.shard_stage,
             shard_total_stages: body.shard_total_stages,
             rpc_url: body.rpc_url.clone(),
+            gguf_shard_index: body.gguf_shard_index,
+            gguf_shard_total: body.gguf_shard_total,
         };
         db.upsert_node(&updated)
             .map_err(|err| AppError::internal(err.to_string()))?;
@@ -164,6 +166,8 @@ async fn register_node(
         shard_stage: body.shard_stage,
         shard_total_stages: body.shard_total_stages,
         rpc_url: body.rpc_url,
+        gguf_shard_index: body.gguf_shard_index,
+        gguf_shard_total: body.gguf_shard_total,
     };
 
     db.upsert_node(&node)
@@ -274,7 +278,7 @@ async fn chat_pipeline(
     prompt: &str,
     max_tokens: u32,
 ) -> Result<Json<ChatResponse>, AppError> {
-    let (text, stages, model) = run_pipeline(
+    let (text, stages, model, mode) = run_pipeline(
         &state.http,
         &state.health_http,
         pipeline,
@@ -288,8 +292,8 @@ async fn chat_pipeline(
     info!(
         node_id = %last.id,
         stages = pipeline.len(),
-        rpc_backends = pipeline.iter().skip(1).filter(|n| !n.rpc_url.is_empty()).count(),
-        "routed pipeline chat request (RPC tensor split)"
+        %mode,
+        "routed pipeline chat request"
     );
 
     Ok(Json(ChatResponse {
@@ -297,7 +301,7 @@ async fn chat_pipeline(
         node_name: last.name.clone(),
         model,
         text,
-        mode: "pipeline".to_string(),
+        mode: mode.to_string(),
         stages,
     }))
 }
@@ -362,6 +366,7 @@ async fn run_infer(
             prompt: prompt.to_string(),
             max_tokens,
             rpc_servers: vec![],
+            remote_shards: vec![],
         })
         .send()
         .await
